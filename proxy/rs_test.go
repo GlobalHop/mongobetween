@@ -48,8 +48,15 @@ func rsDirectClient(t *testing.T) *mongo.Client {
 	return c
 }
 
+// primaryState is the identity of a primary: host plus election id (a new election changes the id even when the same
+// host is elected again).
+type primaryState struct {
+	host       string
+	electionID string
+}
+
 // waitForPrimary polls hello on the direct client until a writable primary is found (max 30s).
-func waitForPrimary(t *testing.T, direct *mongo.Client) {
+func waitForPrimary(t *testing.T, direct *mongo.Client) primaryState {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
@@ -58,22 +65,45 @@ func waitForPrimary(t *testing.T, direct *mongo.Client) {
 		err := direct.Database("admin").RunCommand(c, bson.D{{Key: "hello", Value: 1}}).Decode(&res)
 		cancel()
 		if err == nil && res["isWritablePrimary"] == true {
-			return
+			me, _ := res["me"].(string)
+			return primaryState{host: me, electionID: fmt.Sprint(res["electionId"])}
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
 	t.Fatal("no primary elected within 30s")
+	return primaryState{}
 }
 
-// stepDown forces the current primary to step down; the resulting network error is ignored.
+// stepDown forces the current primary to step down and waits until a new election has produced a primary (a different
+// host, or the same host with a new election id). Only a network (connection closed) error from the command is
+// tolerated; any other command error fails the test.
 func stepDown(t *testing.T, direct *mongo.Client) {
 	t.Helper()
+	old := waitForPrimary(t, direct)
+	require.NotEmpty(t, old.host)
+
 	c, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	_ = direct.Database("admin").RunCommand(c, bson.D{
+	err := direct.Database("admin").RunCommand(c, bson.D{
 		{Key: "replSetStepDown", Value: 10},
 		{Key: "force", Value: true},
 	}).Err()
+	cancel()
+	if err != nil {
+		require.True(t, mongo.IsNetworkError(err), "replSetStepDown failed with a non-network error: %v", err)
+	}
+
+	deadline := time.Now().Add(40 * time.Second)
+	for time.Now().Before(deadline) {
+		var res bson.M
+		c, cancel := context.WithTimeout(ctx, 3*time.Second)
+		err := direct.Database("admin").RunCommand(c, bson.D{{Key: "hello", Value: 1}}).Decode(&res)
+		cancel()
+		if err == nil && res["isWritablePrimary"] == true && fmt.Sprint(res["electionId"]) != old.electionID {
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("no new election after stepdown of %s within 40s", old.host)
 }
 
 // setupRSProxy starts a proxy in front of the replica set and returns it with its upstream.
@@ -99,6 +129,7 @@ func setupRSProxy(t *testing.T, port int) (*Proxy, *mongob.Mongo) {
 		func(string) *mongob.Mongo { return upstream }, dynamic, nil, nil)
 	require.NoError(t, err)
 	go func() { _ = proxy.Run() }()
+	t.Cleanup(upstream.Close)
 	t.Cleanup(proxy.Shutdown)
 	return proxy, upstream
 }
@@ -215,7 +246,9 @@ func TestRSTransactionAfterFailover(t *testing.T) {
 	stepDown(t, direct)
 	require.NoError(t, insert(2))
 
-	count, err := coll.CountDocuments(ctx, bson.D{})
+	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	count, err := coll.CountDocuments(cctx, bson.D{})
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), count)
 }
