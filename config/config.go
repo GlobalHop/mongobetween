@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/DataDog/datadog-go/statsd"
 	"go.mongodb.org/mongo-driver/event"
@@ -29,17 +30,18 @@ var validNetworks = []string{"tcp", "tcp4", "tcp6", "unix", "unixpacket"}
 var newStatsdClientInit = newStatsdClient
 
 type Config struct {
-	network        string
-	unlink         bool
-	ping           bool
-	maxWireVersion int32
-	pretty         bool
-	clients        []client
-	level          zapcore.Level
-	dynamic        string
-	statsdaddr     string
-	logger         *zap.Logger
-	statsd         *statsd.Client
+	network         string
+	unlink          bool
+	ping            bool
+	checkoutTimeout time.Duration
+	maxWireVersion  int32
+	pretty          bool
+	clients         []client
+	level           zapcore.Level
+	dynamic         string
+	statsdaddr      string
+	logger          *zap.Logger
+	statsd          *statsd.Client
 }
 
 type client struct {
@@ -82,7 +84,7 @@ func (c *Config) Proxies(log *zap.Logger) (proxies []*proxy.Proxy, err error) {
 
 	mongos := make(map[string]*mongo.Mongo)
 	for _, client := range c.clients {
-		m, err := mongo.Connect(log, c.statsd, client.opts, mongo.Settings{Ping: c.ping, MaxWireVersion: c.maxWireVersion})
+		m, err := mongo.Connect(log, c.statsd, client.opts, mongo.Settings{Ping: c.ping, MaxWireVersion: c.maxWireVersion, CheckoutTimeout: c.checkoutTimeout})
 		if err != nil {
 			return nil, err
 		}
@@ -118,6 +120,7 @@ func parseFlags() (*Config, error) {
 	}
 
 	var maxWireVersion int
+	var checkoutTimeout time.Duration
 	var unlink, ping, pretty, enableSdamMetrics, enableSdamLogging bool
 	var network, username, password, stats, loglevel, dynamic string
 	flag.StringVar(&network, "network", "tcp4", "One of: tcp, tcp4, tcp6, unix or unixpacket")
@@ -126,6 +129,7 @@ func parseFlags() (*Config, error) {
 	flag.StringVar(&stats, "statsd", defaultStatsdAddress, "Statsd address")
 	flag.BoolVar(&unlink, "unlink", false, "Unlink existing unix sockets before listening")
 	flag.IntVar(&maxWireVersion, "max-wire-version", 0, "maxWireVersion reported to clients in handshake replies (0 = mirror upstream)")
+	flag.DurationVar(&checkoutTimeout, "checkout-timeout", 10*time.Second, "Maximum time to wait for an upstream connection checkout (0 = unbounded)")
 	flag.BoolVar(&ping, "ping", false, "Ping downstream MongoDB before listening")
 	flag.BoolVar(&pretty, "pretty", false, "Pretty print logging")
 	flag.StringVar(&loglevel, "loglevel", "info", "One of: debug, info, warn, error, dpanic, panic, fatal")
@@ -197,17 +201,18 @@ func parseFlags() (*Config, error) {
 	}
 
 	return &Config{
-		network:        network,
-		unlink:         unlink,
-		ping:           ping,
-		maxWireVersion: int32(maxWireVersion),
-		pretty:         pretty,
-		statsdaddr:     stats,
-		clients:        clients,
-		level:          level,
-		dynamic:        dynamic,
-		logger:         loggerClient,
-		statsd:         statsdClient,
+		network:         network,
+		unlink:          unlink,
+		ping:            ping,
+		checkoutTimeout: checkoutTimeout,
+		maxWireVersion:  int32(maxWireVersion),
+		pretty:          pretty,
+		statsdaddr:      stats,
+		clients:         clients,
+		level:           level,
+		dynamic:         dynamic,
+		logger:          loggerClient,
+		statsd:          statsdClient,
 	}, nil
 }
 

@@ -279,7 +279,14 @@ func (m *Mongo) checkoutConnection(server driver.Server) (conn driver.Connection
 		}, 1)
 	}(time.Now())
 
-	conn, err = server.Connection(m.roundTripCtx)
+	ctx := m.roundTripCtx
+	if m.settings.CheckoutTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, m.settings.CheckoutTimeout)
+		defer cancel()
+	}
+
+	conn, err = server.Connection(ctx)
 	if err != nil {
 		return nil, err
 	}

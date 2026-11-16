@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/coinbase/mongobetween/mongo"
 )
+
+var errClientNotFound = errors.New("mongo client not found for address")
 
 type connection struct {
 	log    *zap.Logger
@@ -107,8 +110,12 @@ func (c *connection) handleMessage() (err error) {
 		Op: op,
 	}
 	var res *mongo.Message
-	if res, err = c.roundTrip(req, isMaster, tags); err != nil {
-		return
+	var rtErr error
+	if res, rtErr = c.roundTrip(req, isMaster, tags); rtErr != nil {
+		if errors.Is(rtErr, errClientNotFound) {
+			return rtErr
+		}
+		return c.replyWithError(op, rtErr, unacknowledged)
 	}
 
 	if unacknowledged {
@@ -131,6 +138,23 @@ func (c *connection) handleMessage() (err error) {
 		zap.Int("response_size", len(res.Wm)),
 	)
 	return
+}
+
+// replyWithError answers a failed request with a MongoDB error document and keeps the connection open.
+// Unacknowledged (moreToCome) requests expect no reply, so the error is only logged.
+func (c *connection) replyWithError(op mongo.Operation, cause error, unacknowledged bool) error {
+	pe := mongo.ClassifyProxyError(cause, op)
+	command, _ := op.CommandAndCollection()
+	c.log.Warn("Proxy error reply", zap.Error(cause), zap.Int32("code", pe.Code), zap.String("command", string(command)))
+	if unacknowledged {
+		return nil
+	}
+	res, err := mongo.ErrorResponse(op, pe)
+	if err != nil {
+		return err
+	}
+	_, err = c.conn.Write(res.Wm)
+	return err
 }
 
 func (c *connection) readWireMessage() ([]byte, error) {
@@ -163,7 +187,7 @@ func (c *connection) roundTrip(msg *mongo.Message, isMaster bool, tags []string)
 	if dynamic.DisableWrites {
 		command, _ := msg.Op.CommandAndCollection()
 		if mongo.IsWrite(command) {
-			return nil, fmt.Errorf("writes are disabled for address: %s", c.address)
+			return nil, mongo.ErrWritesDisabled
 		}
 	}
 
@@ -173,7 +197,7 @@ func (c *connection) roundTrip(msg *mongo.Message, isMaster bool, tags []string)
 	}
 	client := c.mongoLookup(redirectTo)
 	if client == nil {
-		return nil, fmt.Errorf("mongo client not found for address: %s", c.address)
+		return nil, fmt.Errorf("%w: %s", errClientNotFound, c.address)
 	}
 
 	if isMaster {

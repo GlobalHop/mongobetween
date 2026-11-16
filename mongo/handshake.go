@@ -72,20 +72,7 @@ func BuildHandshakeResponse(req Operation, topo description.Topology, maxWireOve
 		return nil, err
 	}
 
-	responseTo := req.RequestID()
-	switch req.(type) {
-	case *opMsg:
-		reply := opMsg{sections: []opMsgSection{&opMsgSectionSingle{msg: doc}}}
-		return &Message{Wm: reply.Encode(responseTo), Op: &reply}, nil
-	case *opQuery:
-		reply := opReply{
-			flags:       resultFlagAwaitCapable,
-			numReturned: 1,
-			documents:   []bsoncore.Document{doc},
-		}
-		return &Message{Wm: reply.Encode(responseTo), Op: &reply}, nil
-	}
-	return nil, fmt.Errorf("unsupported handshake opcode: %v", req.OpCode())
+	return encodeDocumentReply(req, doc)
 }
 
 func handshakeDocument(cmd Command, kind description.TopologyKind, maxWire int32) (bsoncore.Document, error) {

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
@@ -209,7 +210,10 @@ func TestProxyWithDynamicConfig(t *testing.T) {
 
 	// expect write error
 	_, err = clients[0].Database("test").Collection(collection).InsertOne(ctx, ash)
-	assert.Error(t, err, "socket was unexpectedly closed")
+	var cmdErr mongo.CommandError
+	if assert.True(t, errors.As(err, &cmdErr), "expected CommandError, got %v", err) {
+		assert.Equal(t, int32(13), cmdErr.Code)
+	}
 
 	_, err = clients[1].Database("test").Collection(collection).InsertMany(ctx, []interface{}{misty, brock})
 	assert.Nil(t, err)
@@ -332,5 +336,54 @@ func TestProxyAppIssuedHandshakeCommands(t *testing.T) {
 		_, hasMsg := res["msg"]
 		assert.False(t, hasMsg, cmd) // upstream is a standalone, so the persona is Single
 		assert.EqualValues(t, 25, res["maxWireVersion"], cmd)
+	}
+}
+
+func TestProxyReturnsErrorWhenUpstreamUnavailable(t *testing.T) {
+	sd, err := statsd.New("localhost:8125")
+	assert.Nil(t, err)
+
+	port := 27024
+	address := fmt.Sprintf(":%d", port)
+	uri := "mongodb://127.0.0.1:1/?serverSelectionTimeoutMS=300&connectTimeoutMS=200"
+	upstream, err := mongob.Connect(zap.L(), sd, options.Client().ApplyURI(uri), mongob.Settings{CheckoutTimeout: time.Second})
+	assert.Nil(t, err)
+	lookup := func(string) *mongob.Mongo { return upstream }
+
+	dynamic, err := NewDynamic("", zap.L())
+	assert.Nil(t, err)
+	proxy, err := NewProxy(zap.L(), sd, "label", "tcp4", address, false, lookup, dynamic)
+	assert.Nil(t, err)
+	defer proxy.Shutdown()
+	go func() {
+		assert.Nil(t, proxy.Run())
+	}()
+
+	// no ping: the upstream is down, but handshakes are answered locally
+	client, err := mongo.Connect(ctx, options.Client().
+		ApplyURI(fmt.Sprintf("mongodb://localhost:%d/test", port)).
+		SetRetryWrites(false).
+		SetServerSelectionTimeout(5*time.Second))
+	assert.Nil(t, err)
+	defer func() {
+		_ = client.Disconnect(ctx)
+	}()
+
+	coll := client.Database("test").Collection("test_proxy_upstream_unavailable")
+	for i := 0; i < 2; i++ {
+		_, err = coll.InsertOne(ctx, Trainer{"Ash", 10, "Pallet Town"})
+		assert.Error(t, err)
+
+		var cmdErr mongo.CommandError
+		var writeErr mongo.WriteException
+		switch {
+		case errors.As(err, &cmdErr):
+			assert.Equal(t, int32(11602), cmdErr.Code, "attempt %d", i)
+			assert.True(t, cmdErr.HasErrorLabel("RetryableWriteError"), "attempt %d", i)
+		case errors.As(err, &writeErr):
+			assert.True(t, writeErr.HasErrorLabel("RetryableWriteError"), "attempt %d", i)
+		default:
+			t.Fatalf("attempt %d: expected CommandError or WriteException, got %T: %v", i, err, err)
+		}
 	}
 }
