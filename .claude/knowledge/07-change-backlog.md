@@ -18,7 +18,8 @@ Originally ranked by importance for **PHP + unsharded Atlas replica set**. Statu
    (16 B .. 48 MB + 16 KiB) with exhaust stripped (`b22b29d`) are done. Frames are read incrementally, so memory
    tracks bytes received, and a TLS client on a plain port is closed at once (`c88e3e1`). With inbound auth on,
    unauthenticated connections are limited to 64 KiB frames and an idle deadline (`-auth-timeout`, 30s). An idle
-   deadline on authenticated client sockets is **not** implemented.
+   deadline on authenticated client sockets is **not** implemented. `-max-connections` (0 = unlimited) caps
+   concurrently open client connections per listener.
 
 ## Should-have
 

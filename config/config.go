@@ -38,6 +38,7 @@ type Config struct {
 	maxWireVersion  int32
 	shutdownTimeout time.Duration
 	authTimeout     time.Duration
+	maxConnections  int
 	pretty          bool
 	clients         []client
 	level           zapcore.Level
@@ -120,7 +121,7 @@ func (c *Config) Proxies(log *zap.Logger) (proxies []*proxy.Proxy, err error) {
 
 	for _, client := range c.clients {
 		p, err := proxy.NewProxy(log, c.statsd, client.label, c.network, client.address, c.unlink, mongoLookup, d, c.tlsConfig, c.users,
-			proxy.WithAuthTimeout(c.authTimeout))
+			proxy.WithAuthTimeout(c.authTimeout), proxy.WithMaxConnections(c.maxConnections))
 		if err != nil {
 			return nil, err
 		}
@@ -148,6 +149,7 @@ func parseFlags() (*Config, error) {
 	var checkoutTimeout time.Duration
 	var shutdownTimeout time.Duration
 	var authTimeout time.Duration
+	var maxConnections int
 	var requireUpstreamTLS bool
 	var unlink, ping, pretty, enableSdamMetrics, enableSdamLogging bool
 	var tlsCertFile, tlsKeyFile, tlsCAFile, authUsersFile string
@@ -165,6 +167,7 @@ func parseFlags() (*Config, error) {
 	flag.StringVar(&tlsKeyFile, "tls-key-file", "", "Server private key (PEM) enabling TLS on the client listener")
 	flag.StringVar(&tlsCAFile, "tls-ca-file", "", "CA bundle (PEM); when set, client certificates are required and verified (mTLS)")
 	flag.StringVar(&authUsersFile, "auth-users-file", "", "File of proxy-only username:password lines enabling inbound SCRAM-SHA-256 authentication (empty = auth off)")
+	flag.IntVar(&maxConnections, "max-connections", 0, "Maximum concurrently open client connections per listener; new ones beyond it are closed (0 = unlimited)")
 	flag.DurationVar(&authTimeout, "auth-timeout", 30*time.Second, "With -auth-users-file, close a connection that stays unauthenticated and idle this long (0 = never)")
 	flag.BoolVar(&ping, "ping", false, "Ping downstream MongoDB before listening")
 	flag.BoolVar(&pretty, "pretty", false, "Pretty print logging")
@@ -205,6 +208,9 @@ func parseFlags() (*Config, error) {
 		}
 	}
 
+	if maxConnections < 0 {
+		return nil, errors.New("-max-connections must not be negative")
+	}
 	if authTimeout < 0 {
 		return nil, errors.New("-auth-timeout must not be negative")
 	}
@@ -275,6 +281,7 @@ func parseFlags() (*Config, error) {
 		maxWireVersion:  int32(maxWireVersion),
 		shutdownTimeout: shutdownTimeout,
 		authTimeout:     authTimeout,
+		maxConnections:  maxConnections,
 		pretty:          pretty,
 		statsdaddr:      stats,
 		clients:         clients,

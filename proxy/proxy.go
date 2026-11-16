@@ -7,6 +7,7 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -35,6 +36,9 @@ type Proxy struct {
 	users       *Users
 	authTimeout time.Duration
 
+	// maxConnections caps concurrently open client connections (0 = unlimited).
+	maxConnections int
+
 	quit chan interface{}
 	kill chan interface{}
 
@@ -50,6 +54,12 @@ type Option func(*Proxy)
 // monitoring connections that send a handshake more often than d stay open. 0 disables it.
 func WithAuthTimeout(d time.Duration) Option {
 	return func(p *Proxy) { p.authTimeout = d }
+}
+
+// WithMaxConnections caps the number of concurrently open client connections; connections accepted beyond it are
+// closed at once. 0 means unlimited.
+func WithMaxConnections(n int) Option {
+	return func(p *Proxy) { p.maxConnections = n }
 }
 
 func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string, unlink bool, mongoLookup MongoLookup, dynamic *Dynamic, tlsConfig *tls.Config, users *Users, opts ...Option) (*Proxy, error) {
@@ -182,6 +192,7 @@ func (p *Proxy) accept(l net.Listener) {
 	}()
 
 	opened, closed := util.StatsdBackgroundGauge(p.statsd, "open_connections", []string{})
+	var open atomic.Int64
 
 	for {
 		c, err := l.Accept()
@@ -201,27 +212,34 @@ func (p *Proxy) accept(l net.Listener) {
 			log = p.log.With(zap.String("remote_address", remoteAddr))
 		}
 
+		if p.maxConnections > 0 && open.Load() >= int64(p.maxConnections) {
+			_ = c.Close()
+			log.Warn("Max connections reached, closing new connection", zap.Int("max_connections", p.maxConnections))
+			_ = p.statsd.Incr("connection_rejected", []string{"reason:max_connections"}, 1)
+			continue
+		}
+
 		done := make(chan interface{})
 
+		open.Add(1)
 		wg.Add(1)
 		opened("connection_opened", []string{})
 		go func() {
+			defer func() {
+				close(done)
+				open.Add(-1)
+				wg.Done()
+				closed("connection_closed", []string{})
+			}()
 			log.Info("Accept")
 			if !handshakeTLS(log, c) {
 				_ = c.Close()
-				close(done)
-				wg.Done()
-				closed("connection_closed", []string{})
 				return
 			}
 			handleConnection(p, log, c)
 
 			_ = c.Close()
 			log.Info("Close")
-
-			close(done)
-			wg.Done()
-			closed("connection_closed", []string{})
 		}()
 
 		go func() {

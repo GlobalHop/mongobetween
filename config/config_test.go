@@ -270,3 +270,26 @@ func TestAuthTimeoutFlag(t *testing.T) {
 	_, err = parseFlags()
 	assert.EqualError(t, err, "-auth-timeout must not be negative")
 }
+
+func TestMaxConnectionsFlag(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	uri := "/tmp/mongo1.sock=mongodb://localhost:27127/database"
+
+	os.Args = []string{"mongobetween", uri}
+	resetFlags()
+	c, err := parseFlags()
+	assert.Nil(t, err)
+	assert.Equal(t, 0, c.maxConnections)
+
+	os.Args = []string{"mongobetween", "-max-connections", "500", uri}
+	resetFlags()
+	c, err = parseFlags()
+	assert.Nil(t, err)
+	assert.Equal(t, 500, c.maxConnections)
+
+	os.Args = []string{"mongobetween", "-max-connections", "-1", uri}
+	resetFlags()
+	_, err = parseFlags()
+	assert.EqualError(t, err, "-max-connections must not be negative")
+}

@@ -28,6 +28,8 @@ Usage: mongobetween [OPTIONS] address1=uri1 [address2=uri2] ...
     	Enable SDAM(Server Discovery And Monitoring) metrics
   -loglevel string
     	One of: debug, info, warn, error, dpanic, panic, fatal (default "info")
+  -max-connections int
+    	Maximum concurrently open client connections per listener; new ones beyond it are closed (0 = unlimited)
   -max-wire-version int
     	maxWireVersion reported to clients in handshake replies (0 = mirror upstream)
   -network string

@@ -43,6 +43,11 @@ Other relevant flags (verified with `mongobetween -h`):
   does not know higher ones.
 - `-shutdown-timeout` (default `30s`) is how long a SIGTERM/SIGINT waits for clients to disconnect before
   closing the remaining connections. A second signal exits immediately.
+- `-max-connections` (default `0` = unlimited) caps concurrently open client connections per listener. A
+  connection beyond it is closed at once, with a `Max connections reached, closing new connection` warning and
+  the `connection_rejected` counter (tag `reason:max_connections`). Set it above the peak number of PHP workers
+  (each holds one connection per proxy) when the listener is reachable by untrusted hosts.
+- `-auth-timeout` (default `30s`) applies only with `-auth-users-file`; see section 2.
 - `-statsd` (default `localhost:8125`) is where metrics are sent.
 
 ## 2. How the PHP application connects
@@ -167,6 +172,7 @@ Metrics (all prefixed `mongobetween.`; the cluster `label` is added as a tag whe
 - `pool_event.connection_check_out_failed` and `pool_event.connection_pool_cleared` rising during a failover is
   normal; outside a failover it indicates trouble.
 - `open_connections` (client side), `cursors` and `transactions` gauges show pinned state in memory.
+- `connection_rejected` (counter, tag `reason:max_connections`) counts clients refused by `-max-connections`.
 
 Log lines (JSON, or readable with `-pretty`):
 
