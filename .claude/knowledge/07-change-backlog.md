@@ -29,7 +29,9 @@ Originally ranked by importance for **PHP + unsharded Atlas replica set**. Statu
 7. **Cursor cache keys and `killCursors` eviction.** **Done.** Pins keyed by full namespace. `6f0b37d`,
    `930de3a`, `61e4e29`.
 8. **Graceful shutdown timeout and second signal.** **Done.** `-shutdown-timeout` (30s), second signal kills.
-   `d3ccb8b`.
+   `d3ccb8b`. The kill path (timeout or second signal) also aborts in-flight upstream round trips
+   (`Mongo.CancelInFlight`), `Mongo.Close` cancels before taking its lock, and a second signal exits with status 1
+   after a 2 s grace period.
 9. **Cluster tag on upstream metrics.** **Done.** `b883655`.
 
 ## Nice-to-have / hygiene

@@ -41,8 +41,11 @@ Other relevant flags (verified with `mongobetween -h`):
 - `-max-wire-version` (default `0`) controls the `maxWireVersion` in the handshake reply. `0` mirrors the real
   upstream value, which is what you want. The value is capped at 25 because the bundled Go driver (v1.17.10)
   does not know higher ones.
-- `-shutdown-timeout` (default `30s`) is how long a SIGTERM/SIGINT waits for clients to disconnect before
-  closing the remaining connections. A second signal exits immediately.
+- `-shutdown-timeout` (default `30s`) is how long a SIGTERM/SIGINT waits for clients to disconnect. When it
+  expires, the proxy force closes the remaining client connections and aborts their in-flight upstream requests.
+  A second signal does the same at once and then exits with status 1 after a further 2 s if the process has not
+  finished by itself. Under Kubernetes set `terminationGracePeriodSeconds` above `-shutdown-timeout` (for example
+  `-shutdown-timeout` + 10 s) so the proxy gets to drain before the SIGKILL.
 - `-max-connections` (default `0` = unlimited) caps concurrently open client connections per listener. A
   connection beyond it is closed at once, with a `Max connections reached, closing new connection` warning and
   the `connection_rejected` counter (tag `reason:max_connections`). Set it above the peak number of PHP workers

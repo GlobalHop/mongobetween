@@ -44,6 +44,7 @@ type Proxy struct {
 
 	drained     chan interface{}
 	drainedOnce sync.Once
+	killOnce    sync.Once
 }
 
 // Option configures optional Proxy behaviour.
@@ -123,13 +124,17 @@ func (p *Proxy) ShutdownWithTimeout(d time.Duration) {
 	}
 }
 
+// Kill stops accepting connections, force closes every open client connection and aborts the round trips in
+// progress on this proxy's upstream, so connections stuck on an unresponsive upstream can finish.
 func (p *Proxy) Kill() {
 	p.Shutdown()
 
-	defer func() {
-		_ = recover() // "close of closed channel" panic if Kill() was already called
-	}()
-	close(p.kill)
+	p.killOnce.Do(func() {
+		close(p.kill)
+		if m := p.mongoLookup(p.address); m != nil {
+			m.CancelInFlight()
+		}
+	})
 }
 
 func (p *Proxy) run() error {

@@ -62,27 +62,40 @@ func run(config *config.Config) {
 func shutdownOnSignal(log *zap.Logger, shutdownFunc func(), killFunc func()) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go handleSignals(log, c, shutdownFunc, killFunc, os.Exit, killGracePeriod)
+}
 
-	go func() {
-		shutdownAttempted := false
-		for sig := range c {
-			log.Info("Signal", zap.String("signal", sig.String()))
+// killGracePeriod is how long the process may take to finish after a second signal force closed everything.
+const killGracePeriod = 2 * time.Second
 
-			if !shutdownAttempted {
-				log.Info("Shutting down")
-				go shutdownFunc()
-				shutdownAttempted = true
+// handleSignals starts a graceful shutdown on the first signal. A second signal force closes client connections and
+// aborts in-flight upstream requests (killFunc), then exits with status 1 after grace if the process is still alive.
+func handleSignals(log *zap.Logger, c <-chan os.Signal, shutdownFunc func(), killFunc func(), exit func(int), grace time.Duration) {
+	shutdownAttempted := false
+	killed := false
+	for sig := range c {
+		log.Info("Signal", zap.String("signal", sig.String()))
 
-				if sig == os.Interrupt {
-					time.AfterFunc(1*time.Second, func() {
-						fmt.Println("Ctrl-C again to kill incoming connections")
-					})
-				}
-			} else {
-				log.Warn("Terminating")
-				_ = log.Sync() // #nosec
-				killFunc()
+		if !shutdownAttempted {
+			log.Info("Shutting down")
+			go shutdownFunc()
+			shutdownAttempted = true
+
+			if sig == os.Interrupt {
+				time.AfterFunc(1*time.Second, func() {
+					fmt.Println("Ctrl-C again to kill incoming connections")
+				})
 			}
+		} else if !killed {
+			killed = true
+			log.Warn("Terminating", zap.Duration("exit_after", grace))
+			_ = log.Sync() // #nosec
+			killFunc()
+			time.AfterFunc(grace, func() {
+				log.Warn("Exiting")
+				_ = log.Sync() // #nosec
+				exit(1)
+			})
 		}
-	}()
+	}
 }
