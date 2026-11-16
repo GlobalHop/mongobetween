@@ -1,6 +1,7 @@
 package config
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -40,6 +41,7 @@ type Config struct {
 	clients         []client
 	level           zapcore.Level
 	dynamic         string
+	tlsConfig       *tls.Config
 	statsdaddr      string
 	logger          *zap.Logger
 	statsd          *statsd.Client
@@ -110,7 +112,7 @@ func (c *Config) Proxies(log *zap.Logger) (proxies []*proxy.Proxy, err error) {
 	}
 
 	for _, client := range c.clients {
-		p, err := proxy.NewProxy(log, c.statsd, client.label, c.network, client.address, c.unlink, mongoLookup, d)
+		p, err := proxy.NewProxy(log, c.statsd, client.label, c.network, client.address, c.unlink, mongoLookup, d, c.tlsConfig)
 		if err != nil {
 			return nil, err
 		}
@@ -139,6 +141,7 @@ func parseFlags() (*Config, error) {
 	var shutdownTimeout time.Duration
 	var requireUpstreamTLS bool
 	var unlink, ping, pretty, enableSdamMetrics, enableSdamLogging bool
+	var tlsCertFile, tlsKeyFile, tlsCAFile string
 	var network, username, password, stats, loglevel, dynamic string
 	flag.StringVar(&network, "network", "tcp4", "One of: tcp, tcp4, tcp6, unix or unixpacket")
 	flag.StringVar(&username, "username", "", "MongoDB username")
@@ -149,6 +152,9 @@ func parseFlags() (*Config, error) {
 	flag.DurationVar(&checkoutTimeout, "checkout-timeout", 10*time.Second, "Maximum time to wait for an upstream connection checkout (0 = unbounded)")
 	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", 30*time.Second, "Maximum time to wait for client connections to close on shutdown before force closing them")
 	flag.BoolVar(&requireUpstreamTLS, "require-upstream-tls", false, "Refuse to start unless every upstream cluster is configured with TLS")
+	flag.StringVar(&tlsCertFile, "tls-cert-file", "", "Server certificate (PEM) enabling TLS on the client listener")
+	flag.StringVar(&tlsKeyFile, "tls-key-file", "", "Server private key (PEM) enabling TLS on the client listener")
+	flag.StringVar(&tlsCAFile, "tls-ca-file", "", "CA bundle (PEM); when set, client certificates are required and verified (mTLS)")
 	flag.BoolVar(&ping, "ping", false, "Ping downstream MongoDB before listening")
 	flag.BoolVar(&pretty, "pretty", false, "Pretty print logging")
 	flag.StringVar(&loglevel, "loglevel", "info", "One of: debug, info, warn, error, dpanic, panic, fatal")
@@ -164,6 +170,20 @@ func parseFlags() (*Config, error) {
 	stats = expandEnv(stats)
 	loglevel = expandEnv(loglevel)
 	dynamic = expandEnv(dynamic)
+	tlsCertFile = expandEnv(tlsCertFile)
+	tlsKeyFile = expandEnv(tlsKeyFile)
+	tlsCAFile = expandEnv(tlsCAFile)
+
+	var tlsConfig *tls.Config
+	if tlsCertFile != "" || tlsKeyFile != "" {
+		var err error
+		tlsConfig, err = proxy.LoadServerTLSConfig(tlsCertFile, tlsKeyFile, tlsCAFile)
+		if err != nil {
+			return nil, err
+		}
+	} else if tlsCAFile != "" {
+		return nil, errors.New("-tls-ca-file requires -tls-cert-file and -tls-key-file")
+	}
 
 	level := zap.InfoLevel
 	if loglevel != "" {
@@ -237,6 +257,7 @@ func parseFlags() (*Config, error) {
 		clients:         clients,
 		level:           level,
 		dynamic:         dynamic,
+		tlsConfig:       tlsConfig,
 		logger:          loggerClient,
 		statsd:          statsdClient,
 	}, nil

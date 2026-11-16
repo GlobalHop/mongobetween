@@ -191,3 +191,17 @@ func clientOptionsFor(uri string) (*options.ClientOptions, error) {
 	_, opts, err := clientOptions(uri, "", "")
 	return opts, err
 }
+
+func TestTLSCertWithoutKey(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{
+		"mongobetween",
+		"-tls-cert-file", "/nonexistent/cert.pem",
+		"/tmp/mongo1.sock=mongodb://localhost:27127/database?maxpoolsize=5&label=cluster1",
+	}
+
+	resetFlags()
+	_, err := parseFlags()
+	assert.EqualError(t, err, "both TLS certificate and key files are required")
+}

@@ -278,7 +278,7 @@ func setupProxies(t *testing.T, d *Dynamic, startPort int, count int) []*Proxy {
 		assert.Nil(t, err)
 		upstreams[address] = upstream
 
-		proxy, err := NewProxy(zap.L(), sd, "label", "tcp4", address, false, lookup, d)
+		proxy, err := NewProxy(zap.L(), sd, "label", "tcp4", address, false, lookup, d, nil)
 		assert.Nil(t, err)
 
 		proxies = append(proxies, proxy)
@@ -352,7 +352,7 @@ func TestProxyReturnsErrorWhenUpstreamUnavailable(t *testing.T) {
 
 	dynamic, err := NewDynamic("", zap.L())
 	assert.Nil(t, err)
-	proxy, err := NewProxy(zap.L(), sd, "label", "tcp4", address, false, lookup, dynamic)
+	proxy, err := NewProxy(zap.L(), sd, "label", "tcp4", address, false, lookup, dynamic, nil)
 	assert.Nil(t, err)
 	defer proxy.Shutdown()
 	go func() {
@@ -451,7 +451,7 @@ func TestProxyShutdownWithTimeoutClosesIdleClients(t *testing.T) {
 
 	address := fmt.Sprintf(":%d", port)
 	proxy, err := NewProxy(zap.L(), sd, "label", "tcp4", address, false,
-		func(string) *mongob.Mongo { return upstream }, dynamic)
+		func(string) *mongob.Mongo { return upstream }, dynamic, nil)
 	assert.Nil(t, err)
 
 	runDone := make(chan error, 1)

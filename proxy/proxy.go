@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"runtime/debug"
@@ -30,6 +31,7 @@ type Proxy struct {
 
 	mongoLookup MongoLookup
 	dynamic     *Dynamic
+	tlsConfig   *tls.Config
 
 	quit chan interface{}
 	kill chan interface{}
@@ -38,7 +40,7 @@ type Proxy struct {
 	drainedOnce sync.Once
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string, unlink bool, mongoLookup MongoLookup, dynamic *Dynamic) (*Proxy, error) {
+func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string, unlink bool, mongoLookup MongoLookup, dynamic *Dynamic, tlsConfig *tls.Config) (*Proxy, error) {
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -58,6 +60,7 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string
 
 		mongoLookup: mongoLookup,
 		dynamic:     dynamic,
+		tlsConfig:   tlsConfig,
 
 		quit: make(chan interface{}),
 		kill: make(chan interface{}),
@@ -135,6 +138,9 @@ func (p *Proxy) listen() error {
 	if err != nil {
 		return err
 	}
+	if p.tlsConfig != nil {
+		l = tls.NewListener(l, p.tlsConfig)
+	}
 	defer func() {
 		_ = l.Close()
 	}()
@@ -184,6 +190,13 @@ func (p *Proxy) accept(l net.Listener) {
 		opened("connection_opened", []string{})
 		go func() {
 			log.Info("Accept")
+			if !handshakeTLS(log, c) {
+				_ = c.Close()
+				close(done)
+				wg.Done()
+				closed("connection_closed", []string{})
+				return
+			}
 			handleConnection(log, p.statsd, p.address, c, p.mongoLookup, p.dynamic, p.kill)
 
 			_ = c.Close()
@@ -206,4 +219,20 @@ func (p *Proxy) accept(l net.Listener) {
 			}
 		}()
 	}
+}
+
+// handshakeTLS completes the TLS handshake with a bounded deadline when c is a TLS connection. It returns false
+// if the handshake failed. Non-TLS connections always return true.
+func handshakeTLS(log *zap.Logger, c net.Conn) bool {
+	tc, ok := c.(*tls.Conn)
+	if !ok {
+		return true
+	}
+	_ = tc.SetDeadline(time.Now().Add(tlsHandshakeTimeout))
+	if err := tc.Handshake(); err != nil {
+		log.Warn("TLS handshake failed", zap.Error(err))
+		return false
+	}
+	_ = tc.SetDeadline(time.Time{})
+	return true
 }
