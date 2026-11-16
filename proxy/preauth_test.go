@@ -131,7 +131,7 @@ func TestAuthenticatedIdleConnectionStaysOpen(t *testing.T) {
 // stay open, and authenticated pooled connections must survive idling past it.
 func TestProxyAuthTimeoutKeepsMonitoringAndAuthenticatedConnections(t *testing.T) {
 	requireDockerHarness(t)
-	const port = 27032
+	const port = 27040
 	p := startAuthProxy(t, port, authTestUsersFile, options.Client().ApplyURI(upstreamURI(t)), WithAuthTimeout(time.Second))
 	defer p.Kill()
 
@@ -228,7 +228,7 @@ func responseTo(wm []byte) int32 {
 // startTransaction never reach the upstream or the transaction cache.
 func TestProxyPreAuthBuildInfoIsProxyBuilt(t *testing.T) {
 	requireDockerHarness(t)
-	const port = 27033
+	const port = 27041
 	p, upstream := startAuthProxyUpstream(t, port, authTestUsersFile, options.Client().ApplyURI(upstreamURI(t)))
 	defer p.Kill()
 

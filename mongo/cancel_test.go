@@ -185,7 +185,7 @@ func TestProxyShutdownTimeoutAbortsBlockedUpstream(t *testing.T) {
 	s := newBlackholeServer(t)
 	m := connectBlackhole(t, s)
 
-	const port = 27034
+	const port = 27042
 	dynamic, err := proxy.NewDynamic("", zap.NewNop())
 	assert.NoError(t, err)
 	p, err := proxy.NewProxy(zap.NewNop(), nil, "", "tcp4", fmt.Sprintf("127.0.0.1:%d", port), false,
