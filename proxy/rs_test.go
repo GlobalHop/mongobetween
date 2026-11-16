@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -170,8 +171,32 @@ func TestRSReadPreferenceRouting(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, true, res["secondary"])
 
-	_, err = isMaster(readpref.Secondary(readpref.WithTags("nodeType", "none")))
-	assert.Error(t, err)
+}
+
+// A read preference no member can satisfy fails at once (code 133, as a real mongos does), without blocking for the
+// upstream server selection timeout and without leaking upstream hostnames.
+func TestRSUnsatisfiableReadPreferenceFailsFast(t *testing.T) {
+	port := 27035
+	waitForPrimary(t, rsDirectClient(t))
+	setupRSProxy(t, port)
+	client := rsClient(t, port)
+
+	start := time.Now()
+	c, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	err := client.Database("test").RunCommand(c, bson.D{{Key: "isMaster", Value: 1}},
+		options.RunCmd().SetReadPreference(readpref.Secondary(readpref.WithTags("nodeType", "NOPE")))).Err()
+	elapsed := time.Since(start)
+
+	var cmdErr mongo.CommandError
+	require.True(t, errors.As(err, &cmdErr), "%v", err)
+	assert.Equal(t, int32(133), cmdErr.Code)
+	assert.Equal(t, "FailedToSatisfyReadPreference", cmdErr.Name)
+	assert.False(t, cmdErr.HasErrorLabel("RetryableWriteError"))
+	assert.True(t, elapsed < 2*time.Second, "took %v", elapsed)
+	for _, leak := range []string{"rs1", "rs2", "rs3", "Addr"} {
+		assert.NotContains(t, cmdErr.Message, leak)
+	}
 }
 
 func TestRSDbLevelCursorOnSecondary(t *testing.T) {

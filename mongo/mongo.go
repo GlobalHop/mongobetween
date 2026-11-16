@@ -306,7 +306,43 @@ func (m *Mongo) selectServer(ctx context.Context, requestCursorID int64, ns stri
 		readPrefSelector(rp), // use client's read preference (ignored by sharded clusters)
 		description.LatencySelector(15 * time.Millisecond), // default localThreshold for the client
 	})
-	return m.topology.SelectServer(ctx, selector)
+	// A stable replica set that has no member matching the read preference never will in time: fail at once, as a
+	// real mongos does, instead of blocking for the whole server selection timeout.
+	if unsatisfiableReadPref(m.topology.Description(), rp) {
+		return nil, fmt.Errorf("%w: no member matches %s", ErrFailedToSatisfyReadPreference, rp.String())
+	}
+	server, err = m.topology.SelectServer(ctx, selector)
+	if err != nil {
+		return nil, mapSelectionError(err, rp)
+	}
+	return server, nil
+}
+
+// unsatisfiableReadPref reports whether rp, a non-primary read preference, matches no member of a replica set that has
+// a primary and no member of unknown state, so that waiting for a topology change cannot help. Sharded, single and
+// load-balanced topologies never qualify: the selector ignores rp there.
+func unsatisfiableReadPref(topo description.Topology, rp *readpref.ReadPref) bool {
+	if rp == nil || rp.Mode() == readpref.PrimaryMode || topo.Kind != description.ReplicaSetWithPrimary {
+		return false
+	}
+	for _, s := range topo.Servers {
+		if s.Kind == description.Unknown {
+			return false
+		}
+	}
+	candidates, err := readPrefSelector(rp).SelectServer(topo, topo.Servers)
+	return err == nil && len(candidates) == 0
+}
+
+// mapSelectionError marks a server selection timeout for a non-primary read preference as
+// ErrFailedToSatisfyReadPreference. Primary selection timeouts (a failover) and cancellations are left as they are.
+func mapSelectionError(err error, rp *readpref.ReadPref) error {
+	var selErr topology.ServerSelectionError
+	if rp == nil || rp.Mode() == readpref.PrimaryMode || !errors.As(err, &selErr) ||
+		errors.Is(err, context.Canceled) || errors.Is(err, ErrInvalidReadPreference) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrFailedToSatisfyReadPreference, err)
 }
 
 func (m *Mongo) checkoutConnection(ctx context.Context, server driver.Server) (conn driver.Connection, err error) {

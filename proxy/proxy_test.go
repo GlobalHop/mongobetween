@@ -396,6 +396,8 @@ func TestProxyReturnsErrorWhenUpstreamUnavailable(t *testing.T) {
 		case errors.As(err, &cmdErr):
 			assert.Equal(t, int32(11602), cmdErr.Code, "attempt %d", i)
 			assert.True(t, cmdErr.HasErrorLabel("RetryableWriteError"), "attempt %d", i)
+			assert.NotContains(t, cmdErr.Message, "127.0.0.1", "attempt %d", i)
+			assert.NotContains(t, cmdErr.Message, "topology", "attempt %d", i)
 		case errors.As(err, &writeErr):
 			assert.True(t, writeErr.HasErrorLabel("RetryableWriteError"), "attempt %d", i)
 		default:

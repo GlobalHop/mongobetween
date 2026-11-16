@@ -1,6 +1,7 @@
 package mongo
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -8,6 +9,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo/description"
+	"go.mongodb.org/mongo-driver/x/mongo/driver/topology"
 	"go.mongodb.org/mongo-driver/x/mongo/driver/wiremessage"
 )
 
@@ -108,4 +111,42 @@ func TestClassifyInvalidReadPreference(t *testing.T) {
 	assert.Equal(t, int32(2), pe.Code)
 	assert.Equal(t, "BadValue", pe.CodeName)
 	assert.Empty(t, pe.Labels, "an invalid read preference is not retryable")
+}
+
+func TestClassifyFailedToSatisfyReadPreference(t *testing.T) {
+	req := errTestMsg(t, bson.D{{Key: "find", Value: "c"}, {Key: "$db", Value: "test"}})
+	pe := ClassifyProxyError(fmt.Errorf("%w: %w", ErrFailedToSatisfyReadPreference, errors.New("boom")), req)
+	assert.Equal(t, int32(133), pe.Code)
+	assert.Equal(t, "FailedToSatisfyReadPreference", pe.CodeName)
+	assert.Empty(t, pe.Labels, "not retryable")
+
+	txn := errTestMsg(t, bson.D{
+		{Key: "find", Value: "c"}, {Key: "lsid", Value: lsidDoc()},
+		{Key: "txnNumber", Value: int64(1)}, {Key: "autocommit", Value: false}, {Key: "$db", Value: "test"},
+	})
+	assert.Empty(t, ClassifyProxyError(ErrFailedToSatisfyReadPreference, txn).Labels)
+}
+
+func TestClassifyMessagesNeverLeakCause(t *testing.T) {
+	const leak = "Addr: rs1-shard-00-00.abc.mongodb.net:27017"
+	req := errTestMsg(t, bson.D{{Key: "find", Value: "c"}, {Key: "$db", Value: "test"}})
+	for name, err := range map[string]error{
+		"generic":     errors.New(leak),
+		"selection":   topology.ServerSelectionError{Wrapped: context.DeadlineExceeded, Desc: description.Topology{}},
+		"cancelled":   fmt.Errorf("%s: %w", leak, context.Canceled),
+		"unsatisfied": fmt.Errorf("%w: %s", ErrFailedToSatisfyReadPreference, leak),
+		"badvalue":    fmt.Errorf("%w: %s", ErrInvalidReadPreference, leak),
+		"writes":      fmt.Errorf("%w: %s", ErrWritesDisabled, leak),
+	} {
+		pe := ClassifyProxyError(err, req)
+		assert.NotEmpty(t, pe.Message, name)
+		assert.NotContains(t, pe.Message, "Addr", name)
+		assert.NotContains(t, pe.Message, "mongodb.net", name)
+		msg, mErr := ErrorResponse(req, pe)
+		assert.NoError(t, mErr)
+		assert.NotContains(t, string(msg.Wm), "mongodb.net", name)
+	}
+	pe := ClassifyProxyError(errors.New(leak), req)
+	assert.Equal(t, int32(11602), pe.Code)
+	assert.Equal(t, []string{"RetryableWriteError"}, pe.Labels)
 }

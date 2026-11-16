@@ -1,7 +1,9 @@
 package mongo
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,7 +12,9 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/address"
 	"go.mongodb.org/mongo-driver/mongo/description"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"go.mongodb.org/mongo-driver/tag"
 	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
+	"go.mongodb.org/mongo-driver/x/mongo/driver/topology"
 )
 
 func TestExtractReadPref_Primary(t *testing.T) {
@@ -368,4 +372,56 @@ func TestSelectionReadPrefWritesUsePrimary(t *testing.T) {
 	rp, err := selectionReadPref(NewOpMsg(doc, nil).Op)
 	assert.NoError(t, err)
 	assert.Equal(t, readpref.SecondaryMode, rp.Mode())
+}
+
+func TestUnsatisfiableReadPref(t *testing.T) {
+	wire := &description.VersionRange{Max: 21}
+	primary := description.Server{Addr: address.Address("rs1:27017"), Kind: description.RSPrimary, WireVersion: wire}
+	secondary := description.Server{
+		Addr: address.Address("rs2:27017"), Kind: description.RSSecondary, WireVersion: wire,
+		Tags: tag.Set{{Name: "nodeType", Value: "ANALYTICS"}},
+	}
+	unknown := description.Server{Addr: address.Address("rs3:27017"), Kind: description.Unknown}
+
+	rs := func(kind description.TopologyKind, servers ...description.Server) description.Topology {
+		return description.Topology{Kind: kind, Servers: servers}
+	}
+	mustRP := func(mode readpref.Mode, opts ...readpref.Option) *readpref.ReadPref {
+		rp, err := readpref.New(mode, opts...)
+		assert.NoError(t, err)
+		return rp
+	}
+	tagged := func(v string) readpref.Option { return readpref.WithTags("nodeType", v) }
+
+	for name, tc := range map[string]struct {
+		topo description.Topology
+		rp   *readpref.ReadPref
+		want bool
+	}{
+		"tag mismatch":                  {rs(description.ReplicaSetWithPrimary, primary, secondary), mustRP(readpref.SecondaryMode, tagged("NOPE")), true},
+		"tag match":                     {rs(description.ReplicaSetWithPrimary, primary, secondary), mustRP(readpref.SecondaryMode, tagged("ANALYTICS")), false},
+		"unknown member":                {rs(description.ReplicaSetWithPrimary, primary, secondary, unknown), mustRP(readpref.SecondaryMode, tagged("NOPE")), false},
+		"primary mode":                  {rs(description.ReplicaSetWithPrimary, primary, secondary), readpref.Primary(), false},
+		"nil rp":                        {rs(description.ReplicaSetWithPrimary, primary, secondary), nil, false},
+		"sharded":                       {rs(description.Sharded, description.Server{Kind: description.Mongos}), mustRP(readpref.SecondaryMode, tagged("NOPE")), false},
+		"single":                        {rs(description.Single, primary), mustRP(readpref.SecondaryMode, tagged("NOPE")), false},
+		"load balanced":                 {rs(description.LoadBalanced, primary), mustRP(readpref.SecondaryMode, tagged("NOPE")), false},
+		"secondary, none known":         {rs(description.ReplicaSetWithPrimary, primary), readpref.Secondary(), true},
+		"secondary, none, unknown":      {rs(description.ReplicaSetWithPrimary, primary, unknown), readpref.Secondary(), false},
+		"no primary":                    {rs(description.ReplicaSetNoPrimary, secondary), mustRP(readpref.SecondaryMode, tagged("NOPE")), false},
+		"secondaryPreferred falls back": {rs(description.ReplicaSetWithPrimary, primary), readpref.SecondaryPreferred(), false},
+	} {
+		assert.Equal(t, tc.want, unsatisfiableReadPref(tc.topo, tc.rp), name)
+	}
+}
+
+func TestMapSelectionError(t *testing.T) {
+	timeout := topology.ServerSelectionError{Wrapped: context.DeadlineExceeded}
+	sec := readpref.Secondary()
+
+	assert.True(t, errors.Is(mapSelectionError(timeout, sec), ErrFailedToSatisfyReadPreference))
+	assert.False(t, errors.Is(mapSelectionError(timeout, readpref.Primary()), ErrFailedToSatisfyReadPreference))
+	assert.False(t, errors.Is(mapSelectionError(timeout, nil), ErrFailedToSatisfyReadPreference))
+	assert.False(t, errors.Is(mapSelectionError(topology.ServerSelectionError{Wrapped: context.Canceled}, sec), ErrFailedToSatisfyReadPreference))
+	assert.False(t, errors.Is(mapSelectionError(fmt.Errorf("%w: x", ErrInvalidReadPreference), sec), ErrFailedToSatisfyReadPreference))
 }
