@@ -24,8 +24,9 @@ import (
 const (
 	mechanismSCRAMSHA256 = "SCRAM-SHA-256"
 	scramIterations      = 15000
-	scramSaltBytes       = 16
-	decoyKeyBytes        = 32
+	// 28 bytes matches what a real mongod generates for SCRAM-SHA-256.
+	scramSaltBytes = 28
+	decoyKeyBytes  = 32
 
 	codeUnauthorized         int32 = 13
 	codeAuthenticationFailed int32 = 18
@@ -136,7 +137,8 @@ func deriveCredentials(user, pass string) (scram.StoredCredentials, error) {
 		return scram.StoredCredentials{}, err
 	}
 	return client.GetStoredCredentials(scram.KeyFactors{
-		Salt:  base64.StdEncoding.EncodeToString(salt),
+		// scram.KeyFactors.Salt is the raw salt; the library base64-encodes it into the server-first message.
+		Salt:  string(salt),
 		Iters: scramIterations,
 	}), nil
 }
@@ -159,7 +161,7 @@ func (u *Users) lookup(username string) (scram.StoredCredentials, error) {
 	_, _ = mac.Write([]byte(username))
 	return scram.StoredCredentials{
 		KeyFactors: scram.KeyFactors{
-			Salt:  base64.StdEncoding.EncodeToString(mac.Sum(nil)[:scramSaltBytes]),
+			Salt:  string(mac.Sum(nil)[:scramSaltBytes]),
 			Iters: scramIterations,
 		},
 		StoredKey: u.decoyStoredKey,

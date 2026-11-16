@@ -68,6 +68,18 @@ func scramConverse(t *testing.T, u *Users, user, pass string) bool {
 	return err == nil && cc.Valid()
 }
 
+// The salt is sent to clients base64-encoded by the scram library, so the stored value must be the raw salt:
+// libmongoc rejects a double-encoded (24/40 byte) salt.
+func TestSCRAMSaltIsRaw28Bytes(t *testing.T) {
+	u, err := LoadUsers(writeUsersFile(t, "app:pw1"))
+	assert.NoError(t, err)
+	assert.Len(t, u.creds["app"].Salt, 28)
+
+	decoy, err := u.lookup("nobody")
+	assert.NoError(t, err)
+	assert.Len(t, decoy.Salt, 28)
+}
+
 func TestLoadUsers(t *testing.T) {
 	u, err := LoadUsers(writeUsersFile(t, "app:pa:ss\n# c\n\nro:x"))
 	assert.NoError(t, err)
