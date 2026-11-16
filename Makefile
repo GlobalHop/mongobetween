@@ -1,4 +1,4 @@
-.PHONY: build docker test test-docker lint
+.PHONY: build docker test test-docker test-docker-down lint
 
 build:
 	go build -o bin/mongobetween .
@@ -14,3 +14,6 @@ test-docker:
 
 lint:
 	GOGC=75 golangci-lint run --timeout 10m --concurrency 32 -v -E golint ./...
+
+test-docker-down:
+	docker compose -p mongobetween-test down -v

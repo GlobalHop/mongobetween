@@ -23,8 +23,8 @@ func rsURI(t *testing.T) string {
 func TestRSHarness(t *testing.T) {
 	c, err := mongo.Connect(context.Background(), options.Client().ApplyURI(rsURI(t)))
 	require.NoError(t, err)
-	defer c.Disconnect(context.Background())
+	defer func() { _ = c.Disconnect(context.Background()) }()
 	var res bson.M
-	require.NoError(t, c.Database("admin").RunCommand(context.Background(), bson.D{{"hello", 1}}).Decode(&res))
+	require.NoError(t, c.Database("admin").RunCommand(context.Background(), bson.D{{Key: "hello", Value: 1}}).Decode(&res))
 	assert.Equal(t, "rs0", res["setName"])
 }
