@@ -33,6 +33,7 @@ type Proxy struct {
 	dynamic     *Dynamic
 	tlsConfig   *tls.Config
 	users       *Users
+	authTimeout time.Duration
 
 	quit chan interface{}
 	kill chan interface{}
@@ -41,7 +42,17 @@ type Proxy struct {
 	drainedOnce sync.Once
 }
 
-func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string, unlink bool, mongoLookup MongoLookup, dynamic *Dynamic, tlsConfig *tls.Config, users *Users) (*Proxy, error) {
+// Option configures optional Proxy behaviour.
+type Option func(*Proxy)
+
+// WithAuthTimeout closes a connection that stays unauthenticated and idle for d (only when inbound authentication
+// is on). The deadline is re-armed before every read until the connection authenticates, so unauthenticated
+// monitoring connections that send a handshake more often than d stay open. 0 disables it.
+func WithAuthTimeout(d time.Duration) Option {
+	return func(p *Proxy) { p.authTimeout = d }
+}
+
+func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string, unlink bool, mongoLookup MongoLookup, dynamic *Dynamic, tlsConfig *tls.Config, users *Users, opts ...Option) (*Proxy, error) {
 	if label != "" {
 		log = log.With(zap.String("cluster", label))
 
@@ -51,7 +62,7 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string
 			return nil, err
 		}
 	}
-	return &Proxy{
+	p := &Proxy{
 		log:    log,
 		statsd: sd,
 
@@ -68,7 +79,11 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string
 		kill: make(chan interface{}),
 
 		drained: make(chan interface{}),
-	}, nil
+	}
+	for _, opt := range opts {
+		opt(p)
+	}
+	return p, nil
 }
 
 func (p *Proxy) Run() error {
@@ -199,7 +214,7 @@ func (p *Proxy) accept(l net.Listener) {
 				closed("connection_closed", []string{})
 				return
 			}
-			handleConnection(log, p.statsd, p.address, c, p.mongoLookup, p.dynamic, p.users, p.kill)
+			handleConnection(p, log, c)
 
 			_ = c.Close()
 			log.Info("Close")

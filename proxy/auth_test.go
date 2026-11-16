@@ -382,7 +382,7 @@ func upstreamURI(t *testing.T) string {
 	return "mongodb://mongo1:27017/test"
 }
 
-func startAuthProxy(t *testing.T, port int, usersFile string, upstreamOpts *options.ClientOptions) *Proxy {
+func startAuthProxy(t *testing.T, port int, usersFile string, upstreamOpts *options.ClientOptions, proxyOpts ...Option) *Proxy {
 	t.Helper()
 	requireDockerHarness(t)
 	users, err := LoadUsers(writeUsersFile(t, usersFile))
@@ -396,7 +396,7 @@ func startAuthProxy(t *testing.T, port int, usersFile string, upstreamOpts *opti
 	assert.NoError(t, err)
 
 	p, err := NewProxy(zap.L(), sd, "label", "tcp4", fmt.Sprintf(":%d", port), false,
-		func(string) *mongob.Mongo { return upstream }, dynamic, nil, users)
+		func(string) *mongob.Mongo { return upstream }, dynamic, nil, users, proxyOpts...)
 	assert.NoError(t, err)
 	go func() { _ = p.Run() }()
 	return p

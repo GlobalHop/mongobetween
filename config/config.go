@@ -37,6 +37,7 @@ type Config struct {
 	checkoutTimeout time.Duration
 	maxWireVersion  int32
 	shutdownTimeout time.Duration
+	authTimeout     time.Duration
 	pretty          bool
 	clients         []client
 	level           zapcore.Level
@@ -118,7 +119,8 @@ func (c *Config) Proxies(log *zap.Logger) (proxies []*proxy.Proxy, err error) {
 	}
 
 	for _, client := range c.clients {
-		p, err := proxy.NewProxy(log, c.statsd, client.label, c.network, client.address, c.unlink, mongoLookup, d, c.tlsConfig, c.users)
+		p, err := proxy.NewProxy(log, c.statsd, client.label, c.network, client.address, c.unlink, mongoLookup, d, c.tlsConfig, c.users,
+			proxy.WithAuthTimeout(c.authTimeout))
 		if err != nil {
 			return nil, err
 		}
@@ -145,6 +147,7 @@ func parseFlags() (*Config, error) {
 	var maxWireVersion int
 	var checkoutTimeout time.Duration
 	var shutdownTimeout time.Duration
+	var authTimeout time.Duration
 	var requireUpstreamTLS bool
 	var unlink, ping, pretty, enableSdamMetrics, enableSdamLogging bool
 	var tlsCertFile, tlsKeyFile, tlsCAFile, authUsersFile string
@@ -162,6 +165,7 @@ func parseFlags() (*Config, error) {
 	flag.StringVar(&tlsKeyFile, "tls-key-file", "", "Server private key (PEM) enabling TLS on the client listener")
 	flag.StringVar(&tlsCAFile, "tls-ca-file", "", "CA bundle (PEM); when set, client certificates are required and verified (mTLS)")
 	flag.StringVar(&authUsersFile, "auth-users-file", "", "File of proxy-only username:password lines enabling inbound SCRAM-SHA-256 authentication (empty = auth off)")
+	flag.DurationVar(&authTimeout, "auth-timeout", 30*time.Second, "With -auth-users-file, close a connection that stays unauthenticated and idle this long (0 = never)")
 	flag.BoolVar(&ping, "ping", false, "Ping downstream MongoDB before listening")
 	flag.BoolVar(&pretty, "pretty", false, "Pretty print logging")
 	flag.StringVar(&loglevel, "loglevel", "info", "One of: debug, info, warn, error, dpanic, panic, fatal")
@@ -199,6 +203,10 @@ func parseFlags() (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid loglevel: %s", loglevel)
 		}
+	}
+
+	if authTimeout < 0 {
+		return nil, errors.New("-auth-timeout must not be negative")
 	}
 
 	if !validNetwork(network) {
@@ -266,6 +274,7 @@ func parseFlags() (*Config, error) {
 		checkoutTimeout: checkoutTimeout,
 		maxWireVersion:  int32(maxWireVersion),
 		shutdownTimeout: shutdownTimeout,
+		authTimeout:     authTimeout,
 		pretty:          pretty,
 		statsdaddr:      stats,
 		clients:         clients,

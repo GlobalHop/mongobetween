@@ -21,6 +21,12 @@ var errClientNotFound = errors.New("mongo client not found for address")
 
 var errTLSOnPlainPort = errors.New("TLS client on plain-text port")
 
+var errPreAuthFrameTooLarge = errors.New("unauthenticated message too large")
+
+// maxPreAuthMessageSize bounds frames read before a connection authenticates (inbound auth on). Handshake and SASL
+// messages are a few hundred bytes.
+const maxPreAuthMessageSize = 64 * 1024
+
 type connection struct {
 	log    *zap.Logger
 	statsd *statsd.Client
@@ -39,9 +45,14 @@ type connection struct {
 	// users is nil when inbound authentication is off.
 	users *Users
 	auth  authSession
+
+	// authTimeout is the idle read deadline of an unauthenticated connection (0 = none); authDeadlineSet records
+	// that the deadline is armed on conn.
+	authTimeout     time.Duration
+	authDeadlineSet bool
 }
 
-func handleConnection(log *zap.Logger, sd *statsd.Client, address string, conn net.Conn, mongoLookup MongoLookup, dynamic *Dynamic, users *Users, kill chan interface{}) {
+func handleConnection(p *Proxy, log *zap.Logger, conn net.Conn) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("Connection crashed", zap.String("panic", fmt.Sprintf("%v", r)), zap.String("stack", string(debug.Stack())))
@@ -50,15 +61,16 @@ func handleConnection(log *zap.Logger, sd *statsd.Client, address string, conn n
 
 	c := connection{
 		log:    log,
-		statsd: sd,
+		statsd: p.statsd,
 
-		address: address,
+		address: p.address,
 		conn:    conn,
-		kill:    kill,
+		kill:    p.kill,
 
-		mongoLookup: mongoLookup,
-		dynamic:     dynamic,
-		users:       users,
+		mongoLookup: p.mongoLookup,
+		dynamic:     p.dynamic,
+		users:       p.users,
+		authTimeout: p.authTimeout,
 	}
 	c.processMessages()
 }
@@ -69,6 +81,15 @@ func (c *connection) processMessages() {
 		if err != nil {
 			if errors.Is(err, errTLSOnPlainPort) {
 				c.log.Warn("TLS client on plain-text port")
+				return
+			}
+			if errors.Is(err, errPreAuthFrameTooLarge) {
+				c.log.Warn("Closing unauthenticated connection", zap.Error(err))
+				return
+			}
+			var ne net.Error
+			if c.authDeadlineSet && errors.As(err, &ne) && ne.Timeout() {
+				c.log.Info("Closing idle unauthenticated connection", zap.Duration("auth_timeout", c.authTimeout))
 				return
 			}
 			if err != io.EOF {
@@ -194,6 +215,10 @@ const headerSize = 16
 func (c *connection) readWireMessage() ([]byte, error) {
 	var header [headerSize]byte
 
+	if err := c.updateAuthDeadline(); err != nil {
+		return nil, err
+	}
+
 	if _, err := io.ReadFull(c.conn, header[:4]); err != nil {
 		return nil, err
 	}
@@ -218,6 +243,9 @@ func (c *connection) readWireMessage() ([]byte, error) {
 	if size < headerSize || size > mongo.MaxWireMessageSize {
 		return nil, fmt.Errorf("invalid message size %d", size)
 	}
+	if c.unauthenticated() && size > maxPreAuthMessageSize {
+		return nil, fmt.Errorf("%w: %d bytes", errPreAuthFrameTooLarge, size)
+	}
 
 	c.buffer.Reset()
 	c.buffer.Write(prefix)
@@ -229,6 +257,28 @@ func (c *connection) readWireMessage() ([]byte, error) {
 		return nil, err
 	}
 	return c.buffer.Bytes(), nil
+}
+
+// unauthenticated reports whether inbound auth is on and this connection has not authenticated.
+func (c *connection) unauthenticated() bool {
+	return c.users != nil && !c.auth.authenticated
+}
+
+// updateAuthDeadline arms the idle read deadline before every read while the connection is unauthenticated, and
+// clears it once after the connection authenticates.
+func (c *connection) updateAuthDeadline() error {
+	if c.authTimeout <= 0 {
+		return nil
+	}
+	if c.unauthenticated() {
+		c.authDeadlineSet = true
+		return c.conn.SetReadDeadline(time.Now().Add(c.authTimeout))
+	}
+	if c.authDeadlineSet {
+		c.authDeadlineSet = false
+		return c.conn.SetReadDeadline(time.Time{})
+	}
+	return nil
 }
 
 func (c *connection) isTLS() bool {

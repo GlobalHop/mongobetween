@@ -14,6 +14,8 @@ go install github.com/coinbase/mongobetween
 ### Usage
 ```
 Usage: mongobetween [OPTIONS] address1=uri1 [address2=uri2] ...
+  -auth-timeout duration
+    	With -auth-users-file, close a connection that stays unauthenticated and idle this long (0 = never) (default 30s)
   -auth-users-file string
     	File of proxy-only username:password lines enabling inbound SCRAM-SHA-256 authentication (empty = auth off)
   -checkout-timeout duration

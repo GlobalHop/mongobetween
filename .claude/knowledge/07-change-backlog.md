@@ -15,8 +15,10 @@ Originally ranked by importance for **PHP + unsharded Atlas replica set**. Statu
    `-checkout-timeout` (10s). `eb35d7b`.
 4. **Stale transaction pin.** **Done.** `c37b237`.
 5. **Deadlines and frame limits.** **Partial.** Checkout deadline (`eb35d7b`) and frame size limits
-   (16 B .. 48 MB + 16 KiB) with exhaust stripped (`b22b29d`) are done. An idle/read deadline on client
-   sockets is **not** implemented.
+   (16 B .. 48 MB + 16 KiB) with exhaust stripped (`b22b29d`) are done. Frames are read incrementally, so memory
+   tracks bytes received, and a TLS client on a plain port is closed at once (`c88e3e1`). With inbound auth on,
+   unauthenticated connections are limited to 64 KiB frames and an idle deadline (`-auth-timeout`, 30s). An idle
+   deadline on authenticated client sockets is **not** implemented.
 
 ## Should-have
 
@@ -47,7 +49,7 @@ Originally ranked by importance for **PHP + unsharded Atlas replica set**. Statu
 
 - Go driver v2 migration.
 - `speculativeAuthenticate` support (one fewer round trip per new client connection).
-- Idle/read deadline on client sockets.
+- Idle/read deadline on authenticated client sockets.
 - `IsWrite` completeness for `DisableWrites`, legacy OP_UPDATE/OP_DELETE bugs, go-getter replacement.
 - Exhaust cursors and `OP_COMPRESSED` (deliberately unsupported).
 - Inbound auth mechanisms other than SCRAM-SHA-256; per-user privileges.

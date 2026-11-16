@@ -247,3 +247,26 @@ func TestAuthUsersFile(t *testing.T) {
 	_, err = parseFlags()
 	assert.Error(t, err)
 }
+
+func TestAuthTimeoutFlag(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	uri := "/tmp/mongo1.sock=mongodb://localhost:27127/database"
+
+	os.Args = []string{"mongobetween", uri}
+	resetFlags()
+	c, err := parseFlags()
+	assert.Nil(t, err)
+	assert.Equal(t, 30*time.Second, c.authTimeout)
+
+	os.Args = []string{"mongobetween", "-auth-timeout", "5s", uri}
+	resetFlags()
+	c, err = parseFlags()
+	assert.Nil(t, err)
+	assert.Equal(t, 5*time.Second, c.authTimeout)
+
+	os.Args = []string{"mongobetween", "-auth-timeout", "-1s", uri}
+	resetFlags()
+	_, err = parseFlags()
+	assert.EqualError(t, err, "-auth-timeout must not be negative")
+}

@@ -105,6 +105,10 @@ Rules and caveats:
   as a secret.
 - Before authenticating, a client may only run the handshake, `saslStart`/`saslContinue`, `ping`, `buildInfo`
   and `endSessions`. Everything else gets error code 13 (Unauthorized). `logout` is answered locally.
+- Before authenticating, a message larger than 64 KiB closes the connection, and a connection that sends nothing
+  for `-auth-timeout` (default `30s`, `0` = never) is closed (log `Closing idle unauthenticated connection`). The
+  timer restarts with every message, so driver monitoring connections, which never authenticate but send a
+  handshake every heartbeat (10 s by default), stay open. Once authenticated, a connection has no idle limit.
 - Supply the PHP password from the environment (`getenv(...)` as above), not from a literal in source code.
 
 ## 3. Smoke test through the proxy
