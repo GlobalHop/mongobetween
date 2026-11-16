@@ -47,6 +47,7 @@ type Config struct {
 	logger          *zap.Logger
 	statsd          *statsd.Client
 	mongos          []*mongo.Mongo
+	dynamicConfig   *proxy.Dynamic
 }
 
 type client struct {
@@ -91,6 +92,9 @@ func (c *Config) CloseUpstreams() {
 	for _, m := range c.mongos {
 		m.Close()
 	}
+	if c.dynamicConfig != nil {
+		c.dynamicConfig.Close()
+	}
 }
 
 func (c *Config) Proxies(log *zap.Logger) (proxies []*proxy.Proxy, err error) {
@@ -98,6 +102,7 @@ func (c *Config) Proxies(log *zap.Logger) (proxies []*proxy.Proxy, err error) {
 	if err != nil {
 		return nil, err
 	}
+	c.dynamicConfig = d
 
 	mongos := make(map[string]*mongo.Mongo)
 	for _, client := range c.clients {

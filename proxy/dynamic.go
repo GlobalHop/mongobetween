@@ -13,9 +13,16 @@ import (
 	"go.uber.org/zap"
 )
 
+// getterMutex serializes go-getter usage: Client.Get configures the package-level default getters
+// (getter.Getters) in place, so concurrent Gets from several Dynamic instances are a data race.
+var getterMutex sync.Mutex
+
 type Dynamic struct {
-	config *DynamicClusters
-	mutex  sync.RWMutex
+	config    *DynamicClusters
+	mutex     sync.RWMutex
+	stop      chan struct{}
+	done      chan struct{}
+	closeOnce sync.Once
 }
 
 type DynamicClusters struct {
@@ -28,12 +35,19 @@ type DynamicCluster struct {
 }
 
 func NewDynamic(url string, log *zap.Logger) (*Dynamic, error) {
-	d := Dynamic{}
-	err := d.start(url, log)
-	if err != nil {
+	d := &Dynamic{stop: make(chan struct{}), done: make(chan struct{})}
+	if err := d.start(url, log); err != nil {
 		return nil, err
 	}
-	return &d, nil
+	return d, nil
+}
+
+// Close stops the poller and waits for it to exit. It is safe to call more than once.
+func (d *Dynamic) Close() {
+	d.closeOnce.Do(func() {
+		close(d.stop)
+		<-d.done
+	})
 }
 
 func (d *Dynamic) ForAddress(address string) DynamicCluster {
@@ -51,19 +65,28 @@ func (d *Dynamic) ForAddress(address string) DynamicCluster {
 
 func (d *Dynamic) start(url string, log *zap.Logger) error {
 	if url == "" {
+		close(d.done)
 		return nil
 	}
 
 	// poll at least once in the main thread
 	if err := d.poll(url, log); err != nil {
+		close(d.done)
 		return err
 	}
 
 	go func() {
+		defer close(d.done)
+		ticker := time.NewTicker(10 * time.Second) // TODO make configurable
+		defer ticker.Stop()
 		for {
-			time.Sleep(10 * time.Second) // TODO make configurable
-			if err := d.poll(url, log); err != nil {
-				log.Error("Error polling dynamic URL", zap.String("url", url), zap.Error(err))
+			select {
+			case <-d.stop:
+				return
+			case <-ticker.C:
+				if err := d.poll(url, log); err != nil {
+					log.Error("Error polling dynamic URL", zap.String("url", url), zap.Error(err))
+				}
 			}
 		}
 	}()
@@ -95,7 +118,10 @@ func (d *Dynamic) poll(url string, log *zap.Logger) error {
 		Pwd:  pwd,
 		Mode: getter.ClientModeFile,
 	}
-	if err := client.Get(); err != nil {
+	getterMutex.Lock()
+	err = client.Get()
+	getterMutex.Unlock()
+	if err != nil {
 		return err
 	}
 

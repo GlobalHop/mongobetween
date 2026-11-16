@@ -174,6 +174,7 @@ func TestProxyWithDynamicConfig(t *testing.T) {
 
 	d, err := NewDynamic(f.Name(), zap.L())
 	assert.Nil(t, err)
+	t.Cleanup(d.Close)
 
 	proxies := setupProxies(t, d, proxyPort, 3)
 	defer func() {

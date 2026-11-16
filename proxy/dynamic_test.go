@@ -33,6 +33,7 @@ func TestDynamic(t *testing.T) {
 
 	d, err := NewDynamic(f.Name(), zap.L())
 	assert.Nil(t, err)
+	t.Cleanup(d.Close)
 
 	dy := d.ForAddress(":12345")
 	assert.True(t, dy.DisableWrites)
@@ -45,4 +46,23 @@ func TestDynamic(t *testing.T) {
 	dy = d.ForAddress("non-existent")
 	assert.False(t, dy.DisableWrites)
 	assert.Equal(t, dy.RedirectTo, "")
+}
+
+func TestDynamicCloseStopsPollerAndIsIdempotent(t *testing.T) {
+	f, err := os.CreateTemp("", "*.json")
+	assert.Nil(t, err)
+	defer func() { _ = os.Remove(f.Name()) }()
+	_, err = f.Write([]byte(`{"Clusters":{}}`))
+	assert.Nil(t, err)
+	assert.Nil(t, f.Close())
+
+	d, err := NewDynamic(f.Name(), zap.L())
+	assert.Nil(t, err)
+	d.Close()
+	d.Close()
+	select {
+	case <-d.done:
+	default:
+		t.Fatal("poller still running after Close")
+	}
 }
