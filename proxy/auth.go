@@ -346,6 +346,17 @@ func (c *connection) authorize(op mongo.Operation) (reply *mongo.Message, handle
 	}
 
 	if c.users == nil {
+		switch name {
+		case "saslStart", "saslContinue", "authenticate":
+			// Forwarded, these would authenticate the shared upstream connection as whoever the client claims.
+			c.log.Info("Authentication refused: inbound auth is disabled", zap.String("command", name))
+			res, err := mongo.ErrorResponse(op, mongo.ProxyError{
+				Code:     codeAuthenticationFailed,
+				CodeName: "AuthenticationFailed",
+				Message:  "inbound auth disabled on this proxy",
+			})
+			return res, true, err
+		}
 		return nil, false, nil
 	}
 

@@ -82,7 +82,7 @@ URI and driver option rules:
 | `mongodb+srv://` | Do not use. The proxy has no SRV record, and SRV implies TLS. Use `mongodb://host:port`. |
 | `tls=true` / `ssl=true` | Allowed only when the proxy runs with `-tls-cert-file` and `-tls-key-file`; pair it with `tlsCAFile` for a private CA. Otherwise the proxy closes the connection at once and logs `TLS client on plain-text port`. |
 | `tlsCertificateKeyFile` | Required only if the proxy runs with `-tls-ca-file` (mutual TLS). |
-| user and password | Allowed, and required when the proxy runs with `-auth-users-file`. These must be the **proxy** users from that file, never the Atlas user. Only `SCRAM-SHA-256` is supported; libmongoc picks it automatically when you do not set `authMechanism`. If auth is not enabled on the proxy, omit credentials. |
+| user and password | Allowed, and required when the proxy runs with `-auth-users-file`. These must be the **proxy** users from that file, never the Atlas user. Only `SCRAM-SHA-256` is supported; libmongoc picks it automatically when you do not set `authMechanism`. If auth is not enabled on the proxy, omit credentials: the proxy refuses `saslStart`/`saslContinue`/`authenticate` with code 18 ("inbound auth disabled on this proxy") and never forwards them. |
 | `authSource`, `authMechanism` | Normally omit. If set, the mechanism must be `SCRAM-SHA-256`. |
 | `replicaSet=...` | Do not use. libmongoc refuses a `mongos` inside a replica-set topology ("No suitable servers found"). |
 | `serverApi` (Stable API) | Allowed. The proxy answers the `hello` handshake locally in the same opcode the client used. |

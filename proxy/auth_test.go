@@ -587,3 +587,37 @@ func TestProxyLogoutAuthOff(t *testing.T) {
 	_, err = client.Database("test").Collection("test_proxy_auth").CountDocuments(ctx, bson.D{})
 	assert.NoError(t, err)
 }
+
+func replyDoc(t *testing.T, res *mongob.Message) bsoncore.Document {
+	t.Helper()
+	if !assert.NotNil(t, res) {
+		return nil
+	}
+	op, err := mongob.Decode(res.Wm)
+	assert.NoError(t, err)
+	doc, ok := mongob.CommandDocument(op)
+	assert.True(t, ok)
+	return doc
+}
+
+// With inbound auth off, authentication commands are refused locally: forwarded, they would authenticate (or log
+// out) the shared upstream connection.
+func TestAuthCommandsRefusedWhenAuthOff(t *testing.T) {
+	c := &connection{log: zap.NewNop()}
+	for name, doc := range map[string]bson.D{
+		"saslStart":    {{Key: "saslStart", Value: int32(1)}, {Key: "mechanism", Value: "SCRAM-SHA-256"}, {Key: "payload", Value: primitive.Binary{Data: []byte("n,,n=app,r=abc")}}, {Key: "$db", Value: "admin"}},
+		"saslContinue": {{Key: "saslContinue", Value: int32(1)}, {Key: "conversationId", Value: int32(1)}, {Key: "payload", Value: primitive.Binary{}}, {Key: "$db", Value: "admin"}},
+		"authenticate": {{Key: "authenticate", Value: int32(1)}, {Key: "mechanism", Value: "MONGODB-X509"}, {Key: "$db", Value: "$external"}},
+	} {
+		res, handled, err := c.authorize(opMsgOperation(t, doc))
+		assert.NoError(t, err, name)
+		assert.True(t, handled, "%s must not be forwarded upstream", name)
+		reply := replyDoc(t, res)
+		if reply == nil {
+			continue
+		}
+		assert.Equal(t, 0.0, reply.Lookup("ok").Double(), name)
+		assert.Equal(t, int32(18), reply.Lookup("code").Int32(), name)
+		assert.Contains(t, reply.Lookup("errmsg").StringValue(), "inbound auth disabled on this proxy", name)
+	}
+}
