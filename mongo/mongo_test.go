@@ -52,7 +52,7 @@ func TestRoundTrip(t *testing.T) {
 	assert.Nil(t, err)
 
 	clientOptions := options.Client().ApplyURI(uri)
-	m, err := mongo.Connect(zap.L(), sd, clientOptions, false)
+	m, err := mongo.Connect(zap.L(), sd, clientOptions, mongo.Settings{})
 	assert.Nil(t, err)
 
 	msg := insertOpMsg(t)
@@ -75,7 +75,7 @@ func TestRoundTripProcessError(t *testing.T) {
 	sd, err := statsd.New("localhost:8125")
 	assert.Nil(t, err)
 
-	upstream, err := mongo.Connect(zap.L(), sd, options.Client().ApplyURI(uri), false)
+	upstream, err := mongo.Connect(zap.L(), sd, options.Client().ApplyURI(uri), mongo.Settings{})
 	assert.Nil(t, err)
 	lookup := func(address string) *mongo.Mongo {
 		return upstream
@@ -93,7 +93,7 @@ func TestRoundTripProcessError(t *testing.T) {
 	}()
 
 	clientOptions := options.Client().ApplyURI("mongodb://localhost:27023/test")
-	m, err := mongo.Connect(zap.L(), sd, clientOptions, false)
+	m, err := mongo.Connect(zap.L(), sd, clientOptions, mongo.Settings{})
 	assert.Nil(t, err)
 
 	msg := insertOpMsg(t)

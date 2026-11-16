@@ -25,9 +25,10 @@ const pingTimeout = 60 * time.Second
 const disconnectTimeout = 10 * time.Second
 
 type Mongo struct {
-	log    *zap.Logger
-	statsd *statsd.Client
-	opts   *options.ClientOptions
+	log      *zap.Logger
+	statsd   *statsd.Client
+	opts     *options.ClientOptions
+	settings Settings
 
 	mu           sync.RWMutex
 	client       *mongo.Client
@@ -46,7 +47,7 @@ func extractTopology(c *mongo.Client) *topology.Topology {
 	return d.Interface().(*topology.Topology)
 }
 
-func Connect(log *zap.Logger, sd *statsd.Client, opts *options.ClientOptions, ping bool) (*Mongo, error) {
+func Connect(log *zap.Logger, sd *statsd.Client, opts *options.ClientOptions, s Settings) (*Mongo, error) {
 	// timeout shouldn't be hit if ping == false, as Connect doesn't block the current goroutine
 	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
 	defer cancel()
@@ -58,7 +59,7 @@ func Connect(log *zap.Logger, sd *statsd.Client, opts *options.ClientOptions, pi
 		return nil, err
 	}
 
-	if ping {
+	if s.Ping {
 		log.Info("Ping")
 		err = c.Ping(ctx, readpref.Primary())
 		if err != nil {
@@ -75,6 +76,7 @@ func Connect(log *zap.Logger, sd *statsd.Client, opts *options.ClientOptions, pi
 		log:             log,
 		statsd:          sd,
 		opts:            opts,
+		settings:        s,
 		client:          c,
 		topology:        t,
 		cursors:         newCursorCache(),
@@ -85,6 +87,11 @@ func Connect(log *zap.Logger, sd *statsd.Client, opts *options.ClientOptions, pi
 	go m.cacheMonitor()
 
 	return &m, nil
+}
+
+// HandshakeResponse answers a client handshake locally, pretending to be a mongos.
+func (m *Mongo) HandshakeResponse(req Operation) (*Message, error) {
+	return BuildHandshakeResponse(req, m.Description(), m.settings.MaxWireVersion)
 }
 
 func (m *Mongo) Description() description.Topology {

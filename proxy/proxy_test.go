@@ -270,7 +270,7 @@ func setupProxies(t *testing.T, d *Dynamic, startPort int, count int) []*Proxy {
 
 		address := fmt.Sprintf(":%d", port)
 
-		upstream, err := mongob.Connect(zap.L(), sd, options.Client().ApplyURI(uri), false)
+		upstream, err := mongob.Connect(zap.L(), sd, options.Client().ApplyURI(uri), mongob.Settings{})
 		assert.Nil(t, err)
 		upstreams[address] = upstream
 
@@ -308,4 +308,29 @@ func setupClient(t *testing.T, host string, port int, clientOpts ...*options.Cli
 	}
 
 	return client
+}
+
+func TestProxyAppIssuedHandshakeCommands(t *testing.T) {
+	proxy := setupProxy(t)
+	defer proxy.Shutdown()
+
+	go func() {
+		err := proxy.Run()
+		assert.Nil(t, err)
+	}()
+
+	client := setupClient(t, "localhost", proxyPort)
+	defer func() {
+		err := client.Disconnect(ctx)
+		assert.Nil(t, err)
+	}()
+
+	for _, cmd := range []string{"isMaster", "hello"} {
+		var res bson.M
+		err := client.Database("admin").RunCommand(ctx, bson.D{{Key: cmd, Value: 1}}).Decode(&res)
+		assert.Nil(t, err, cmd)
+		_, hasMsg := res["msg"]
+		assert.False(t, hasMsg, cmd) // upstream is a standalone, so the persona is Single
+		assert.EqualValues(t, 25, res["maxWireVersion"], cmd)
+	}
 }

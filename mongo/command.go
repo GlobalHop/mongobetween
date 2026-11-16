@@ -1,6 +1,7 @@
 package mongo
 
 import (
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
 )
 
@@ -22,6 +23,7 @@ const (
 	Find              Command = "find"
 	FindAndModify     Command = "findAndModify"
 	GetMore           Command = "getMore"
+	Hello             Command = "hello"
 	Insert            Command = "insert"
 	IsMaster          Command = "isMaster"
 	Ismaster          Command = "ismaster"
@@ -33,7 +35,7 @@ const (
 )
 
 var collectionCommands = []Command{Aggregate, Count, CreateIndexes, Delete, Distinct, Drop, DropIndexes, Find, FindAndModify, Insert, ListIndexes, MapReduce, Update}
-var int32Commands = []Command{AbortTransaction, Aggregate, CommitTransaction, DropDatabase, IsMaster, Ismaster, ListCollections, ListDatabases}
+var int32Commands = []Command{AbortTransaction, Aggregate, CommitTransaction, DropDatabase, Hello, IsMaster, Ismaster, ListCollections, ListDatabases}
 var int64Commands = []Command{GetMore}
 var arrayCommands = []Command{EndSessions}
 
@@ -75,18 +77,32 @@ func CommandAndCollection(msg bsoncore.Document) (Command, string) {
 	return Unknown, ""
 }
 
-func IsIsMasterDoc(doc bsoncore.Document) bool {
-	isMaster := doc.Lookup(string(IsMaster))
-	ismaster := doc.Lookup(string(Ismaster))
-	return IsIsMasterValueTruthy(isMaster) || IsIsMasterValueTruthy(ismaster)
+// HandshakeCommandOf returns Hello, IsMaster or Unknown depending on whether doc is a truthy handshake command.
+func HandshakeCommandOf(doc bsoncore.Document) Command {
+	if IsIsMasterValueTruthy(doc.Lookup(string(Hello))) {
+		return Hello
+	}
+	if IsIsMasterValueTruthy(doc.Lookup(string(IsMaster))) || IsIsMasterValueTruthy(doc.Lookup(string(Ismaster))) {
+		return IsMaster
+	}
+	return Unknown
 }
 
+func IsIsMasterDoc(doc bsoncore.Document) bool {
+	return HandshakeCommandOf(doc) != Unknown
+}
+
+// IsIsMasterValueTruthy reports whether val is an int32/int64/double > 0 or boolean true.
 func IsIsMasterValueTruthy(val bsoncore.Value) bool {
-	if intValue, isInt := val.Int32OK(); intValue > 0 {
-		return true;
-	} else if !isInt {
-		boolValue, isBool := val.BooleanOK()
-		return boolValue && isBool
+	switch val.Type {
+	case bson.TypeInt32:
+		return val.Int32() > 0
+	case bson.TypeInt64:
+		return val.Int64() > 0
+	case bson.TypeDouble:
+		return val.Double() > 0
+	case bson.TypeBoolean:
+		return val.Boolean()
 	}
-	return false;
+	return false
 }

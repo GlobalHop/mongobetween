@@ -177,9 +177,8 @@ func (c *connection) roundTrip(msg *mongo.Message, isMaster bool, tags []string)
 	}
 
 	if isMaster {
-		requestID := msg.Op.RequestID()
-		c.log.Debug("Non-proxied ismaster response", zap.Int32("request_id", requestID))
-		return mongo.IsMasterResponse(requestID, client.Description().Kind)
+		c.log.Debug("Non-proxied handshake response", zap.Int32("request_id", msg.Op.RequestID()))
+		return client.HandshakeResponse(msg.Op)
 	}
 
 	return client.RoundTrip(msg, tags)
