@@ -167,6 +167,9 @@ func (c *connection) readWireMessage() ([]byte, error) {
 
 	// read the length as an int32
 	size := (int32(sizeBuf[0])) | (int32(sizeBuf[1]) << 8) | (int32(sizeBuf[2]) << 16) | (int32(sizeBuf[3]) << 24)
+	if size < 16 || size > mongo.MaxWireMessageSize {
+		return nil, fmt.Errorf("invalid message size %d", size)
+	}
 	if int(size) > cap(c.buffer) {
 		c.buffer = make([]byte, 0, size)
 	}

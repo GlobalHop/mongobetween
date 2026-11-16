@@ -191,13 +191,25 @@ func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
 	}
 
 	unacknowledged := msg.Op.Unacknowledged()
-	wm, err := m.roundTrip(conn, msg.Wm, unacknowledged, tags)
+	wm, err := m.roundTrip(conn, StripExhaustAllowed(msg.Wm), unacknowledged, tags)
 	if err != nil {
 		m.processError(err, ep, addr, conn)
 		return nil, err
 	}
 	if unacknowledged {
 		return &Message{}, nil
+	}
+
+	if hasMoreToCome(wm) {
+		// the upstream will stream further replies we never read; never let the pool reuse this connection
+		m.log.Error("Upstream reply has moreToCome set, discarding connection", zap.String("address", addr.String()))
+		m.processError(wrapNetworkError(errors.New("unexpected moreToCome reply")), ep, addr, conn)
+		if exp, ok := conn.(driver.Expirable); ok {
+			if expErr := exp.Expire(); expErr != nil {
+				m.log.Error("Error expiring Mongo connection", zap.Error(expErr), zap.String("address", addr.String()))
+			}
+		}
+		return nil, errors.New("upstream sent a streaming (moreToCome) reply")
 	}
 
 	op, err := Decode(wm)
