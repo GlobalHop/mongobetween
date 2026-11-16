@@ -14,7 +14,8 @@ Originally ranked by importance for **PHP + unsharded Atlas replica set**. Statu
    `TransientTransactionError` / `UnknownTransactionCommitResult` labels (plain requests get `RetryableWriteError`,
    transaction statements `TransientTransactionError`, `commitTransaction` both `RetryableWriteError` and
    `UnknownTransactionCommitResult`); code 13 for disabled writes; code 2 for invalid read preferences;
-   `-checkout-timeout` (10s). `eb35d7b`.
+   `-checkout-timeout` (10s). `eb35d7b`. Every error reply is counted in the `proxy_error_reply` statsd counter
+   (tags `code`, `command`; `0e760b7`); error replies are `success:true` in `handle_message`.
 4. **Stale transaction pin.** **Done.** `c37b237`.
 5. **Deadlines and frame limits.** **Partial.** Checkout deadline (`eb35d7b`) and frame size limits
    (16 B .. 48 MB + 16 KiB) with exhaust stripped (`b22b29d`) are done. Frames are read incrementally, so memory
@@ -43,7 +44,12 @@ Originally ranked by importance for **PHP + unsharded Atlas replica set**. Statu
 10. **Inbound auth / hardening.** **Done** beyond the original ask: optional listener TLS and mTLS
     (`-tls-cert-file`, `-tls-key-file`, `-tls-ca-file`; `9e52db1`), SCRAM-SHA-256 proxy-only users via
     `-auth-users-file` (`3218ca2`, hardening `0126dbf`, raw 28-byte salt fix `9c23f88`), and
-    `-require-upstream-tls` (`d3ccb8b`; it also rejects `tlsInsecure=true`).
+    `-require-upstream-tls` (`d3ccb8b`; it also rejects `tlsInsecure=true`, `08bc400`). Final-review hardening:
+    nothing a client sends is forwarded before it authenticates (`ping` answered locally, `buildInfo` via a
+    proxy-built command; `d160048`), unauthenticated frames are capped at 64 KiB and idle unauthenticated
+    connections closed after `-auth-timeout` (`ecc43f9`), `-max-connections` caps open client connections
+    (`de0e471`), pre-auth requests are tagged `command:unauthenticated` in statsd (`6e9c349`), and with auth off
+    `saslStart`/`saslContinue`/`authenticate` are refused locally with code 18 (`9327529`).
 11. **`localTime` type, OP_UPDATE/OP_DELETE ZERO bugs, `IsWrite` completeness.** **Not done** (out of scope).
 12. **Go driver upgrade and hygiene.** **Partial.** Upgraded to v1.17.10, `go 1.22`, distroless image
     (`3e3ea57`), golangci-lint v2 (`f527cfa`), and the dynamic-config poller is stoppable and race-free
