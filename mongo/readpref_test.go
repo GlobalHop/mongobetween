@@ -401,6 +401,8 @@ func TestUnsatisfiableReadPref(t *testing.T) {
 		"tag mismatch":                  {rs(description.ReplicaSetWithPrimary, primary, secondary), mustRP(readpref.SecondaryMode, tagged("NOPE")), true},
 		"tag match":                     {rs(description.ReplicaSetWithPrimary, primary, secondary), mustRP(readpref.SecondaryMode, tagged("ANALYTICS")), false},
 		"unknown member":                {rs(description.ReplicaSetWithPrimary, primary, secondary, unknown), mustRP(readpref.SecondaryMode, tagged("NOPE")), false},
+		"rsother member":                {rs(description.ReplicaSetWithPrimary, primary, secondary, description.Server{Addr: address.Address("rs4:27017"), Kind: description.RSMember}), mustRP(readpref.SecondaryMode, tagged("NOPE")), false},
+		"rsghost member":                {rs(description.ReplicaSetWithPrimary, primary, secondary, description.Server{Addr: address.Address("rs5:27017"), Kind: description.RSGhost}), mustRP(readpref.SecondaryMode, tagged("NOPE")), false},
 		"primary mode":                  {rs(description.ReplicaSetWithPrimary, primary, secondary), readpref.Primary(), false},
 		"nil rp":                        {rs(description.ReplicaSetWithPrimary, primary, secondary), nil, false},
 		"sharded":                       {rs(description.Sharded, description.Server{Kind: description.Mongos}), mustRP(readpref.SecondaryMode, tagged("NOPE")), false},

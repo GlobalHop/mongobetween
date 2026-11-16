@@ -319,14 +319,15 @@ func (m *Mongo) selectServer(ctx context.Context, requestCursorID int64, ns stri
 }
 
 // unsatisfiableReadPref reports whether rp, a non-primary read preference, matches no member of a replica set that has
-// a primary and no member of unknown state, so that waiting for a topology change cannot help. Sharded, single and
+// a primary and no member in an unsettled state (unknown, RSMember "other" or ghost: a recovering member may become eligible
+// soon), so that waiting for a topology change cannot help. Sharded, single and
 // load-balanced topologies never qualify: the selector ignores rp there.
 func unsatisfiableReadPref(topo description.Topology, rp *readpref.ReadPref) bool {
 	if rp == nil || rp.Mode() == readpref.PrimaryMode || topo.Kind != description.ReplicaSetWithPrimary {
 		return false
 	}
 	for _, s := range topo.Servers {
-		if s.Kind == description.Unknown {
+		if s.Kind == description.Unknown || s.Kind == description.RSMember || s.Kind == description.RSGhost {
 			return false
 		}
 	}

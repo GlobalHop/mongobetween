@@ -170,7 +170,6 @@ func TestRSReadPreferenceRouting(t *testing.T) {
 	res, err = isMaster(readpref.Secondary())
 	require.NoError(t, err)
 	assert.Equal(t, true, res["secondary"])
-
 }
 
 // A read preference no member can satisfy fails at once (code 133, as a real mongos does), without blocking for the
