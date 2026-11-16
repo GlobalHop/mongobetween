@@ -11,7 +11,11 @@ import (
 // ErrWritesDisabled is returned when dynamic configuration disables writes for a proxy address.
 var ErrWritesDisabled = errors.New("writes are disabled by mongobetween")
 
+// ErrInvalidReadPreference reports a $readPreference that is present but invalid, or rejected by server selection.
+var ErrInvalidReadPreference = errors.New("invalid read preference")
+
 const (
+	codeBadValue                        int32 = 2
 	codeUnauthorized                    int32 = 13
 	codeInterruptedDueToReplStateChange int32 = 11602
 
@@ -32,6 +36,9 @@ type ProxyError struct {
 func ClassifyProxyError(err error, req Operation) ProxyError {
 	if errors.Is(err, ErrWritesDisabled) {
 		return ProxyError{Code: codeUnauthorized, CodeName: "Unauthorized", Message: err.Error()}
+	}
+	if errors.Is(err, ErrInvalidReadPreference) {
+		return ProxyError{Code: codeBadValue, CodeName: "BadValue", Message: err.Error()}
 	}
 
 	pe := ProxyError{

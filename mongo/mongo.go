@@ -196,7 +196,10 @@ func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
 		lookupCursorID = killCursorIDs[0]
 	}
 	transactionDetails := msg.Op.TransactionDetails()
-	readPref, _ := msg.Op.ReadPref()
+	readPref, err := selectionReadPref(msg.Op)
+	if err != nil {
+		return nil, err
+	}
 	server, err := m.selectServer(ctx, lookupCursorID, requestNS, transactionDetails, readPref)
 	if err != nil {
 		return nil, err
@@ -300,7 +303,7 @@ func (m *Mongo) selectServer(ctx context.Context, requestCursorID int64, ns stri
 		rp = readpref.Primary()
 	}
 	selector := description.CompositeSelector([]description.ServerSelector{
-		description.ReadPrefSelector(rp),                   // use client's read preference (ignored by sharded clusters)
+		readPrefSelector(rp), // use client's read preference (ignored by sharded clusters)
 		description.LatencySelector(15 * time.Millisecond), // default localThreshold for the client
 	})
 	return m.topology.SelectServer(ctx, selector)
@@ -449,4 +452,31 @@ func (m *Mongo) CursorCount() int {
 // TransactionCount returns the number of transactions currently pinned to a server (for tests and diagnostics).
 func (m *Mongo) TransactionCount() int {
 	return m.transactions.count()
+}
+
+// selectionReadPref is the read preference a request is routed with. An absent $readPreference, one that is not a
+// document, or one with an unknown mode falls back to primary; one that is present but invalid (bad tags or
+// maxStalenessSeconds, or a mode that does not allow them) is an ErrInvalidReadPreference.
+func selectionReadPref(op Operation) (*readpref.ReadPref, error) {
+	rp, ok := op.ReadPref()
+	if rp == nil {
+		if !ok {
+			return nil, fmt.Errorf("%w: unsupported $readPreference", ErrInvalidReadPreference)
+		}
+		return readpref.Primary(), nil
+	}
+	return rp, nil
+}
+
+// readPrefSelector is description.ReadPrefSelector with its errors (e.g. maxStalenessSeconds below 90s or below
+// heartbeat + idle write period) marked as ErrInvalidReadPreference. Such an error ends server selection at once.
+func readPrefSelector(rp *readpref.ReadPref) description.ServerSelector {
+	selector := description.ReadPrefSelector(rp)
+	return description.ServerSelectorFunc(func(t description.Topology, candidates []description.Server) ([]description.Server, error) {
+		servers, err := selector.SelectServer(t, candidates)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrInvalidReadPreference, err)
+		}
+		return servers, nil
+	})
 }

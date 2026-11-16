@@ -1,11 +1,14 @@
 package mongo
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo/address"
+	"go.mongodb.org/mongo-driver/mongo/description"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
 )
@@ -274,4 +277,61 @@ func TestExtractReadPrefPrimaryWithTagsInvalid(t *testing.T) {
 	rp, ok := extractReadPref(doc)
 	assert.False(t, ok)
 	assert.Nil(t, rp)
+}
+
+func TestSelectionReadPref(t *testing.T) {
+	msg := func(rp interface{}) Operation {
+		d := bson.D{{Key: "find", Value: "c"}, {Key: "$db", Value: "test"}}
+		if rp != nil {
+			d = append(d, bson.E{Key: "$readPreference", Value: rp})
+		}
+		doc, err := bson.Marshal(d)
+		assert.NoError(t, err)
+		return NewOpMsg(doc, nil).Op
+	}
+
+	// absent, not a document or an unknown mode: silently primary
+	for name, rp := range map[string]interface{}{
+		"absent":       nil,
+		"not document": "secondary",
+		"unknown mode": bson.D{{Key: "mode", Value: "fastest"}},
+	} {
+		got, err := selectionReadPref(msg(rp))
+		assert.NoError(t, err, name)
+		if assert.NotNil(t, got, name) {
+			assert.Equal(t, readpref.PrimaryMode, got.Mode(), name)
+		}
+	}
+
+	got, err := selectionReadPref(msg(bson.D{{Key: "mode", Value: "secondary"}}))
+	assert.NoError(t, err)
+	assert.Equal(t, readpref.SecondaryMode, got.Mode())
+
+	// present but an invalid combination or malformed field
+	for name, rp := range map[string]bson.D{
+		"primary with tags":         {{Key: "mode", Value: "primary"}, {Key: "tags", Value: bson.A{bson.D{{Key: "a", Value: "b"}}}}},
+		"primary with maxStaleness": {{Key: "mode", Value: "primary"}, {Key: "maxStalenessSeconds", Value: int32(120)}},
+		"malformed tags":            {{Key: "mode", Value: "secondary"}, {Key: "tags", Value: bson.A{"x"}}},
+	} {
+		_, err := selectionReadPref(msg(rp))
+		assert.True(t, errors.Is(err, ErrInvalidReadPreference), "%s: %v", name, err)
+	}
+}
+
+func TestReadPrefSelectorRejectsLowMaxStaleness(t *testing.T) {
+	rp, err := readpref.New(readpref.SecondaryMode, readpref.WithMaxStaleness(30*time.Second))
+	assert.NoError(t, err)
+	servers := []description.Server{
+		{Addr: address.Address("a:27017"), Kind: description.RSPrimary, WireVersion: &description.VersionRange{Max: 21}, HeartbeatInterval: 10 * time.Second},
+		{Addr: address.Address("b:27017"), Kind: description.RSSecondary, WireVersion: &description.VersionRange{Max: 21}, HeartbeatInterval: 10 * time.Second},
+	}
+	topo := description.Topology{Kind: description.ReplicaSetWithPrimary, Servers: servers}
+	_, err = readPrefSelector(rp).SelectServer(topo, servers)
+	assert.True(t, errors.Is(err, ErrInvalidReadPreference), "%v", err)
+
+	ok, err := readpref.New(readpref.SecondaryMode, readpref.WithMaxStaleness(120*time.Second))
+	assert.NoError(t, err)
+	selected, err := readPrefSelector(ok).SelectServer(topo, servers)
+	assert.NoError(t, err)
+	assert.Len(t, selected, 1)
 }

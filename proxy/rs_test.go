@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
 )
 
 func rsURI(t *testing.T) string {
@@ -277,4 +279,38 @@ func TestRSKillCursorsEvicts(t *testing.T) {
 	require.NoError(t, cur.Close(ctx))
 	assert.Eventually(t, func() bool { return upstream.CursorCount() == before },
 		2*time.Second, 50*time.Millisecond)
+}
+
+// An invalid $readPreference is answered with a non-retryable BadValue (code 2), not the retryable 11602.
+func TestRSInvalidReadPreferenceIsBadValue(t *testing.T) {
+	const port = 27043
+	setupRSProxy(t, port)
+
+	var conn net.Conn
+	var err error
+	for i := 0; i < 50; i++ {
+		if conn, err = net.Dial("tcp4", fmt.Sprintf("localhost:%d", port)); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+
+	for name, rp := range map[string]bson.D{
+		"maxStalenessSeconds below 90": {{Key: "mode", Value: "secondary"}, {Key: "maxStalenessSeconds", Value: int32(30)}},
+		"primary with tags":            {{Key: "mode", Value: "primary"}, {Key: "tags", Value: bson.A{bson.D{{Key: "a", Value: "b"}}}}},
+	} {
+		start := time.Now()
+		reply := writeRawCommand(t, conn, bson.D{
+			{Key: "find", Value: "c"},
+			{Key: "$readPreference", Value: rp},
+			{Key: "$db", Value: "test"},
+		})
+		assert.Equal(t, 0.0, reply.Lookup("ok").Double(), name)
+		assert.Equal(t, int32(2), reply.Lookup("code").Int32(), "%s: %v", name, reply)
+		assert.Equal(t, "BadValue", reply.Lookup("codeName").StringValue(), name)
+		assert.Equal(t, bsoncore.Value{}, reply.Lookup("errorLabels"), "%s: must not be retryable", name)
+		assert.True(t, time.Since(start) < 5*time.Second, "%s: answered after %v", name, time.Since(start))
+	}
 }

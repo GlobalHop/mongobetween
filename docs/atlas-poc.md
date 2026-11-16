@@ -88,7 +88,7 @@ URI and driver option rules:
 | `serverApi` (Stable API) | Allowed. The proxy answers the `hello` handshake locally in the same opcode the client used. |
 | `loadBalanced=true` | Do not use. |
 | `directConnection=true` | Pointless; avoid it. |
-| `readPreference=secondary*` (with optional tags and `maxStalenessSeconds`) | Honoured by the proxy and routed to a matching member. If nothing is specified, reads go to the primary. |
+| `readPreference=secondary*` (with optional tags and `maxStalenessSeconds`) | Honoured by the proxy and routed to a matching member. If nothing is specified, reads go to the primary. An invalid read preference (for example `maxStalenessSeconds` below 90, or tags with `primary`) gets the non-retryable error code 2 (BadValue). |
 | `retryWrites`, `retryReads`, transactions, sessions | Supported. |
 | `compressors=` | Has no effect; compression is never negotiated. |
 | Exhaust cursors | Not supported. The proxy strips the `exhaustAllowed` flag so these degrade to normal cursors. |

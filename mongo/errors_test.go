@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -96,4 +97,15 @@ func TestErrorResponseOpQuery(t *testing.T) {
 	reply := op.(*opReply)
 	assert.Equal(t, 1, len(reply.documents))
 	assertErrorDoc(t, bson.Raw(reply.documents[0]))
+}
+
+func TestClassifyInvalidReadPreference(t *testing.T) {
+	req := errTestMsg(t, bson.D{
+		{Key: "find", Value: "c"}, {Key: "lsid", Value: lsidDoc()},
+		{Key: "txnNumber", Value: int64(1)}, {Key: "autocommit", Value: false}, {Key: "$db", Value: "test"},
+	})
+	pe := ClassifyProxyError(fmt.Errorf("server selection error: %w", ErrInvalidReadPreference), req)
+	assert.Equal(t, int32(2), pe.Code)
+	assert.Equal(t, "BadValue", pe.CodeName)
+	assert.Empty(t, pe.Labels, "an invalid read preference is not retryable")
 }
