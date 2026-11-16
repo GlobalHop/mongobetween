@@ -33,8 +33,10 @@ Recommended options for the upstream URI (the one the proxy uses to talk to Atla
 
 Other relevant flags (verified with `mongobetween -h`):
 
-- `-require-upstream-tls` refuses to start unless every upstream is configured for TLS. `mongodb+srv://` implies
-  TLS, so this is a safety net against a mistyped URI.
+- `-require-upstream-tls` refuses to start unless every upstream is configured for TLS with certificate
+  verification (`tlsInsecure=true` is rejected). `mongodb+srv://` implies TLS, so this is a safety net against a
+  mistyped URI. Note that the bundled Go driver ignores `tlsAllowInvalidCertificates` and
+  `tlsAllowInvalidHostnames`; only `tlsInsecure` disables verification.
 - `-ping` pings the upstream before listening, so a bad URI or blocked network fails at start-up.
 - `-checkout-timeout` (default `10s`) bounds how long a request waits for an upstream connection. On expiry the
   client receives an error reply (see section 5) rather than a closed socket.

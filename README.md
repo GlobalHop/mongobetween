@@ -41,7 +41,7 @@ Usage: mongobetween [OPTIONS] address1=uri1 [address2=uri2] ...
   -pretty
     	Pretty print logging
   -require-upstream-tls
-    	Refuse to start unless every upstream cluster is configured with TLS
+    	Refuse to start unless every upstream cluster is configured with TLS and certificate verification
   -shutdown-timeout duration
     	Maximum time to wait for client connections to close on shutdown before force closing them (default 30s)
   -statsd string

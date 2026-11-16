@@ -39,7 +39,7 @@ Originally ranked by importance for **PHP + unsharded Atlas replica set**. Statu
 10. **Inbound auth / hardening.** **Done** beyond the original ask: optional listener TLS and mTLS
     (`-tls-cert-file`, `-tls-key-file`, `-tls-ca-file`; `9e52db1`), SCRAM-SHA-256 proxy-only users via
     `-auth-users-file` (`3218ca2`, hardening `0126dbf`, raw 28-byte salt fix `9c23f88`), and
-    `-require-upstream-tls` (`d3ccb8b`).
+    `-require-upstream-tls` (`d3ccb8b`; it also rejects `tlsInsecure=true`).
 11. **`localTime` type, OP_UPDATE/OP_DELETE ZERO bugs, `IsWrite` completeness.** **Not done** (out of scope).
 12. **Go driver upgrade and hygiene.** **Partial.** Upgraded to v1.17.10, `go 1.22`, distroless image
     (`3e3ea57`), golangci-lint v2 (`f527cfa`), and the dynamic-config poller is stoppable and race-free

@@ -162,7 +162,7 @@ func parseFlags() (*Config, error) {
 	flag.IntVar(&maxWireVersion, "max-wire-version", 0, "maxWireVersion reported to clients in handshake replies (0 = mirror upstream)")
 	flag.DurationVar(&checkoutTimeout, "checkout-timeout", 10*time.Second, "Maximum time to wait for an upstream connection checkout (0 = unbounded)")
 	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", 30*time.Second, "Maximum time to wait for client connections to close on shutdown before force closing them")
-	flag.BoolVar(&requireUpstreamTLS, "require-upstream-tls", false, "Refuse to start unless every upstream cluster is configured with TLS")
+	flag.BoolVar(&requireUpstreamTLS, "require-upstream-tls", false, "Refuse to start unless every upstream cluster is configured with TLS and certificate verification")
 	flag.StringVar(&tlsCertFile, "tls-cert-file", "", "Server certificate (PEM) enabling TLS on the client listener")
 	flag.StringVar(&tlsKeyFile, "tls-key-file", "", "Server private key (PEM) enabling TLS on the client listener")
 	flag.StringVar(&tlsCAFile, "tls-ca-file", "", "CA bundle (PEM); when set, client certificates are required and verified (mTLS)")
@@ -311,12 +311,15 @@ func loadAuthUsers(log *zap.Logger, path string) (*proxy.Users, error) {
 	return users, nil
 }
 
-// validateUpstreamTLS errors if any upstream client has no TLS configuration. The error names only the listen
-// address, never the URI, which may carry credentials.
+// validateUpstreamTLS errors if any upstream client has no TLS configuration or skips certificate verification
+// (tlsInsecure=true). The error names only the listen address, never the URI, which may carry credentials.
 func validateUpstreamTLS(clients []client) error {
 	for _, c := range clients {
 		if c.opts == nil || c.opts.TLSConfig == nil {
 			return fmt.Errorf("upstream TLS required but disabled for %s", c.address)
+		}
+		if c.opts.TLSConfig.InsecureSkipVerify {
+			return fmt.Errorf("upstream TLS certificate verification disabled for %s", c.address)
 		}
 	}
 	return nil

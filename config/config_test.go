@@ -187,6 +187,18 @@ func TestValidateUpstreamTLS(t *testing.T) {
 	}
 }
 
+func TestValidateUpstreamTLSRejectsInsecureSkipVerify(t *testing.T) {
+	insecure, err := clientOptionsFor("mongodb://h:27017/?tls=true&tlsInsecure=true")
+	assert.Nil(t, err)
+	err = validateUpstreamTLS([]client{{address: ":27030", opts: insecure}})
+	if assert.Error(t, err) {
+		assert.Equal(t, "upstream TLS certificate verification disabled for :27030", err.Error())
+	}
+
+	skip := options.Client().SetTLSConfig(&tls.Config{InsecureSkipVerify: true}) // #nosec G402 -- under test
+	assert.Error(t, validateUpstreamTLS([]client{{address: ":27030", opts: skip}}))
+}
+
 func clientOptionsFor(uri string) (*options.ClientOptions, error) {
 	_, opts, err := clientOptions(uri, "", "")
 	return opts, err
