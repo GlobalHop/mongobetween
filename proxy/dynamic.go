@@ -20,6 +20,8 @@ var getterMutex sync.Mutex
 type Dynamic struct {
 	config    *DynamicClusters
 	mutex     sync.RWMutex
+	ctx       context.Context
+	cancel    context.CancelFunc
 	stop      chan struct{}
 	done      chan struct{}
 	closeOnce sync.Once
@@ -36,6 +38,7 @@ type DynamicCluster struct {
 
 func NewDynamic(url string, log *zap.Logger) (*Dynamic, error) {
 	d := &Dynamic{stop: make(chan struct{}), done: make(chan struct{})}
+	d.ctx, d.cancel = context.WithCancel(context.Background())
 	if err := d.start(url, log); err != nil {
 		return nil, err
 	}
@@ -45,6 +48,7 @@ func NewDynamic(url string, log *zap.Logger) (*Dynamic, error) {
 // Close stops the poller and waits for it to exit. It is safe to call more than once.
 func (d *Dynamic) Close() {
 	d.closeOnce.Do(func() {
+		d.cancel() // abort any in-flight fetch so Close cannot hang on a slow source
 		close(d.stop)
 		<-d.done
 	})
@@ -112,7 +116,7 @@ func (d *Dynamic) poll(url string, log *zap.Logger) error {
 	// of input URIs, see https://github.com/hashicorp/go-getter.
 	pwd, _ := os.Getwd()
 	client := &getter.Client{
-		Ctx:  context.Background(),
+		Ctx:  d.ctx,
 		Src:  url,
 		Dst:  f.Name(),
 		Pwd:  pwd,

@@ -87,7 +87,7 @@ func (c *Config) ShutdownTimeout() time.Duration {
 	return c.shutdownTimeout
 }
 
-// CloseUpstreams closes every upstream driver client created by Proxies.
+// CloseUpstreams closes every upstream driver client created by Proxies and stops the dynamic config poller.
 func (c *Config) CloseUpstreams() {
 	for _, m := range c.mongos {
 		m.Close()
