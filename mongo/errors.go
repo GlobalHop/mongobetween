@@ -74,6 +74,12 @@ func DocumentResponse(req Operation, doc bsoncore.Document) (*Message, error) {
 	return encodeDocumentReply(req, doc)
 }
 
+// NewCommandMessage builds a proxy-originated OP_MSG request (flags 0, request ID 0) carrying doc as its body.
+func NewCommandMessage(doc bsoncore.Document) *Message {
+	op := opMsg{sections: []opMsgSection{&opMsgSectionSingle{msg: doc}}}
+	return &Message{Wm: op.Encode(0), Op: &op}
+}
+
 // encodeDocumentReply encodes doc as a single-document reply to req, in the same opcode as req.
 func encodeDocumentReply(req Operation, doc bsoncore.Document) (*Message, error) {
 	responseTo := req.RequestID()

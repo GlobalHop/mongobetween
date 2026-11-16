@@ -361,9 +361,14 @@ func (c *connection) authorize(op mongo.Operation) (reply *mongo.Message, handle
 		return nil, false, nil
 	}
 
+	// Nothing a client sends is forwarded before it authenticates: ping is answered locally and buildInfo by a
+	// proxy-built command, so client fields (lsid, txnNumber, ...) never reach an upstream or the pin caches.
 	switch name {
-	case "ping", "buildInfo", "buildinfo":
-		return nil, false, nil
+	case "ping":
+		res, err := mongo.DocumentResponse(op, okDocument)
+		return res, true, err
+	case "buildInfo", "buildinfo":
+		return c.preAuthBuildInfo(op)
 	case string(mongo.EndSessions):
 		// Acknowledged locally: an unauthenticated client must not end sessions on the shared upstream user.
 		res, err := mongo.DocumentResponse(op, okDocument)
@@ -383,6 +388,30 @@ func (c *connection) authorize(op mongo.Operation) (reply *mongo.Message, handle
 }
 
 var okDocument = bsoncore.NewDocumentBuilder().AppendDouble("ok", 1).Build()
+
+var buildInfoCommand = bsoncore.NewDocumentBuilder().
+	AppendInt32("buildInfo", 1).
+	AppendString("$db", "admin").
+	Build()
+
+// preAuthBuildInfo answers an unauthenticated buildInfo with the upstream reply to a fixed, proxy-built
+// {buildInfo: 1, $db: "admin"}, re-encoded in the opcode of the client request.
+func (c *connection) preAuthBuildInfo(op mongo.Operation) (*mongo.Message, bool, error) {
+	res, err := c.roundTrip(mongo.NewCommandMessage(buildInfoCommand), false, []string{"command:unauthenticated"})
+	if err != nil {
+		if errors.Is(err, errClientNotFound) {
+			return nil, true, err
+		}
+		reply, replyErr := c.proxyErrorReply(op, err)
+		return reply, true, replyErr
+	}
+	doc, ok := mongo.CommandDocument(res.Op)
+	if !ok {
+		return nil, true, errors.New("unexpected buildInfo reply")
+	}
+	reply, err := mongo.DocumentResponse(op, doc)
+	return reply, true, err
+}
 
 func (c *connection) handleSASL(op mongo.Operation, name string, doc bsoncore.Document) (*mongo.Message, bool, error) {
 	var out bsoncore.Document

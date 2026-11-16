@@ -418,3 +418,8 @@ func unwrapConnectionError(err error) error {
 func (m *Mongo) CursorCount() int {
 	return m.cursors.count()
 }
+
+// TransactionCount returns the number of transactions currently pinned to a server (for tests and diagnostics).
+func (m *Mongo) TransactionCount() int {
+	return m.transactions.count()
+}

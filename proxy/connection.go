@@ -192,18 +192,28 @@ func (c *connection) handleMessage() (err error) {
 // replyWithError answers a failed request with a MongoDB error document and keeps the connection open.
 // Unacknowledged (moreToCome) requests expect no reply, so the error is only logged.
 func (c *connection) replyWithError(op mongo.Operation, cause error, unacknowledged bool) error {
-	pe := mongo.ClassifyProxyError(cause, op)
-	command, _ := op.CommandAndCollection()
-	c.log.Warn("Proxy error reply", zap.Error(cause), zap.Int32("code", pe.Code), zap.String("command", string(command)))
 	if unacknowledged {
+		c.logProxyError(op, mongo.ClassifyProxyError(cause, op), cause)
 		return nil
 	}
-	res, err := mongo.ErrorResponse(op, pe)
+	res, err := c.proxyErrorReply(op, cause)
 	if err != nil {
 		return err
 	}
 	_, err = c.conn.Write(res.Wm)
 	return err
+}
+
+// proxyErrorReply logs cause and renders it as the MongoDB error reply to op.
+func (c *connection) proxyErrorReply(op mongo.Operation, cause error) (*mongo.Message, error) {
+	pe := mongo.ClassifyProxyError(cause, op)
+	c.logProxyError(op, pe, cause)
+	return mongo.ErrorResponse(op, pe)
+}
+
+func (c *connection) logProxyError(op mongo.Operation, pe mongo.ProxyError, cause error) {
+	command, _ := op.CommandAndCollection()
+	c.log.Warn("Proxy error reply", zap.Error(cause), zap.Int32("code", pe.Code), zap.String("command", string(command)))
 }
 
 // headerSize is the size of the standard wire message header (messageLength, requestID, responseTo, opCode).

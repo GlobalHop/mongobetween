@@ -384,6 +384,12 @@ func upstreamURI(t *testing.T) string {
 
 func startAuthProxy(t *testing.T, port int, usersFile string, upstreamOpts *options.ClientOptions, proxyOpts ...Option) *Proxy {
 	t.Helper()
+	p, _ := startAuthProxyUpstream(t, port, usersFile, upstreamOpts, proxyOpts...)
+	return p
+}
+
+func startAuthProxyUpstream(t *testing.T, port int, usersFile string, upstreamOpts *options.ClientOptions, proxyOpts ...Option) (*Proxy, *mongob.Mongo) {
+	t.Helper()
 	requireDockerHarness(t)
 	users, err := LoadUsers(writeUsersFile(t, usersFile))
 	assert.NoError(t, err)
@@ -399,7 +405,7 @@ func startAuthProxy(t *testing.T, port int, usersFile string, upstreamOpts *opti
 		func(string) *mongob.Mongo { return upstream }, dynamic, nil, users, proxyOpts...)
 	assert.NoError(t, err)
 	go func() { _ = p.Run() }()
-	return p
+	return p, upstream
 }
 
 // sharedAuthProxy starts (once per test binary) the auth-enabled proxy on authProxyPort with users-file app:s3cret.

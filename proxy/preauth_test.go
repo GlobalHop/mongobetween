@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -11,11 +12,16 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/event"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
+	"go.mongodb.org/mongo-driver/x/mongo/driver/wiremessage"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
+
+	mongob "github.com/coinbase/mongobetween/mongo"
 )
 
 func loadTestUsers(t *testing.T) *Users {
@@ -167,4 +173,88 @@ func TestProxyAuthTimeoutKeepsMonitoringAndAuthenticatedConnections(t *testing.T
 	var ne net.Error
 	assert.False(t, errors.As(err, &ne) && ne.Timeout(), "expected the proxy to close the connection, got %v", err)
 	assert.True(t, time.Since(start) < 3*time.Second, "closed after %v", time.Since(start))
+}
+
+func TestPreAuthPingAnsweredLocally(t *testing.T) {
+	u := loadTestUsers(t)
+	c := &connection{log: zap.NewNop(), users: u}
+	ping := bson.D{
+		{Key: "ping", Value: int32(1)},
+		{Key: "lsid", Value: bson.D{{Key: "id", Value: primitive.Binary{Subtype: 4, Data: make([]byte, 16)}}}},
+		{Key: "$db", Value: "admin"},
+	}
+	res, handled, err := c.authorize(opMsgOperation(t, ping))
+	assert.NoError(t, err)
+	assert.True(t, handled, "pre-auth ping must not be forwarded upstream")
+	assert.Equal(t, 1.0, replyOK(t, res))
+}
+
+// writeRawCommand sends doc as an OP_MSG on conn and returns the reply's body document.
+func writeRawCommand(t *testing.T, conn net.Conn, doc bson.D) bsoncore.Document {
+	t.Helper()
+	raw, err := bson.Marshal(doc)
+	assert.NoError(t, err)
+	idx, wm := wiremessage.AppendHeaderStart(nil, 7, 0, wiremessage.OpMsg)
+	wm = wiremessage.AppendMsgFlags(wm, 0)
+	wm = wiremessage.AppendMsgSectionType(wm, wiremessage.SingleDocument)
+	wm = append(wm, raw...)
+	wm = bsoncore.UpdateLength(wm, idx, int32(len(wm[idx:])))
+	_, err = conn.Write(wm)
+	assert.NoError(t, err)
+
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var size [4]byte
+	_, err = io.ReadFull(conn, size[:])
+	if !assert.NoError(t, err) {
+		return nil
+	}
+	reply := make([]byte, binary.LittleEndian.Uint32(size[:]))
+	copy(reply, size[:])
+	_, err = io.ReadFull(conn, reply[4:])
+	assert.NoError(t, err)
+	op, err := mongob.Decode(reply)
+	assert.NoError(t, err)
+	assert.Equal(t, int32(7), responseTo(reply))
+	body, ok := mongob.CommandDocument(op)
+	assert.True(t, ok)
+	return body
+}
+
+func responseTo(wm []byte) int32 {
+	return int32(binary.LittleEndian.Uint32(wm[8:12]))
+}
+
+// Before authentication buildInfo is answered by a proxy-built command, so client fields such as lsid and
+// startTransaction never reach the upstream or the transaction cache.
+func TestProxyPreAuthBuildInfoIsProxyBuilt(t *testing.T) {
+	requireDockerHarness(t)
+	const port = 27033
+	p, upstream := startAuthProxyUpstream(t, port, authTestUsersFile, options.Client().ApplyURI(upstreamURI(t)))
+	defer p.Kill()
+
+	var conn net.Conn
+	var err error
+	for i := 0; i < 50; i++ {
+		if conn, err = net.Dial("tcp4", fmt.Sprintf("localhost:%d", port)); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !assert.NoError(t, err) {
+		return
+	}
+	defer func() { _ = conn.Close() }()
+
+	reply := writeRawCommand(t, conn, bson.D{
+		{Key: "buildInfo", Value: int32(1)},
+		{Key: "lsid", Value: bson.D{{Key: "id", Value: primitive.Binary{Subtype: 4, Data: make([]byte, 16)}}}},
+		{Key: "txnNumber", Value: int64(1)},
+		{Key: "autocommit", Value: false},
+		{Key: "startTransaction", Value: true},
+		{Key: "$db", Value: "admin"},
+	})
+	assert.Equal(t, 1.0, reply.Lookup("ok").Double(), "%v", reply)
+	_, hasVersion := reply.Lookup("version").StringValueOK()
+	assert.True(t, hasVersion, "%v", reply)
+	assert.Equal(t, 0, upstream.TransactionCount(), "client transaction fields must not reach the transaction cache")
 }

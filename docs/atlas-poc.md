@@ -104,7 +104,9 @@ Rules and caveats:
 - Passwords are stored in the file in clear text, so keep it out of version control and out of images; mount it
   as a secret.
 - Before authenticating, a client may only run the handshake, `saslStart`/`saslContinue`, `ping`, `buildInfo`
-  and `endSessions`. Everything else gets error code 13 (Unauthorized). `logout` is answered locally.
+  and `endSessions`. Everything else gets error code 13 (Unauthorized). `logout` is answered locally. None of
+  these forward client bytes upstream: `ping` and `endSessions` are answered locally, and `buildInfo` is answered
+  with the upstream reply to a fixed `{buildInfo: 1}` the proxy builds itself.
 - Before authenticating, a message larger than 64 KiB closes the connection, and a connection that sends nothing
   for `-auth-timeout` (default `30s`, `0` = never) is closed (log `Closing idle unauthenticated connection`). The
   timer restarts with every message, so driver monitoring connections, which never authenticate but send a
