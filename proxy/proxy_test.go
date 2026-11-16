@@ -387,3 +387,49 @@ func TestProxyReturnsErrorWhenUpstreamUnavailable(t *testing.T) {
 		}
 	}
 }
+
+// TestUpstreamCursorNamespaces verifies against a real mongod that cursor.ns in a reply matches the namespace a
+// driver uses for the following getMore ($db + "." + collection), which is how cursors are pinned.
+func TestUpstreamCursorNamespaces(t *testing.T) {
+	client := setupClient(t, "mongo1", 27017)
+	defer func() { _ = client.Disconnect(ctx) }()
+
+	db := client.Database("cursor_ns_test")
+	_ = db.Drop(ctx)
+	defer func() { _ = db.Drop(ctx) }()
+	for _, name := range []string{"a", "b", "coll"} {
+		_, err := db.Collection(name).InsertMany(ctx, []interface{}{bson.D{{Key: "x", Value: 1}}, bson.D{{Key: "x", Value: 2}}})
+		assert.Nil(t, err)
+	}
+	_, err := db.Collection("coll").Indexes().CreateOne(ctx, mongo.IndexModel{Keys: bson.D{{Key: "x", Value: 1}}})
+	assert.Nil(t, err)
+
+	batch1 := bson.D{{Key: "batchSize", Value: 1}}
+	tests := []struct {
+		name       string
+		cmd        bson.D
+		expectedNS string
+		getMoreCol string
+	}{
+		{"find", bson.D{{Key: "find", Value: "coll"}, {Key: "batchSize", Value: 1}}, "cursor_ns_test.coll", "coll"},
+		{"aggregate", bson.D{{Key: "aggregate", Value: "coll"}, {Key: "pipeline", Value: bson.A{}}, {Key: "cursor", Value: batch1}}, "cursor_ns_test.coll", "coll"},
+		{"aggregate 1", bson.D{{Key: "aggregate", Value: 1}, {Key: "pipeline", Value: bson.A{bson.D{{Key: "$documents", Value: bson.A{bson.D{{Key: "a", Value: 1}}, bson.D{{Key: "a", Value: 2}}}}}}}, {Key: "cursor", Value: batch1}}, "cursor_ns_test.$cmd.aggregate", "$cmd.aggregate"},
+		{"listCollections", bson.D{{Key: "listCollections", Value: 1}, {Key: "cursor", Value: batch1}}, "cursor_ns_test.$cmd.listCollections", "$cmd.listCollections"},
+		{"listIndexes", bson.D{{Key: "listIndexes", Value: "coll"}, {Key: "cursor", Value: batch1}}, "cursor_ns_test.coll", "coll"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var res struct {
+				Cursor struct {
+					ID int64  `bson:"id"`
+					NS string `bson:"ns"`
+				} `bson:"cursor"`
+			}
+			assert.Nil(t, db.RunCommand(ctx, tt.cmd).Decode(&res))
+			assert.NotZero(t, res.Cursor.ID)
+			assert.Equal(t, tt.expectedNS, res.Cursor.NS)
+			assert.Equal(t, "cursor_ns_test."+tt.getMoreCol, res.Cursor.NS)
+			assert.Nil(t, db.RunCommand(ctx, bson.D{{Key: "killCursors", Value: tt.getMoreCol}, {Key: "cursors", Value: bson.A{res.Cursor.ID}}}).Err())
+		})
+	}
+}

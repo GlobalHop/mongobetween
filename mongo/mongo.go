@@ -230,20 +230,7 @@ func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
 		m.processError(opErr, ep, addr, conn)
 	}
 
-	if responseCursorID, ok := op.CursorID(); ok {
-		if responseCursorID != 0 {
-			responseNS := op.CursorNamespace()
-			if responseNS == "" {
-				responseNS = requestNS
-			}
-			m.cursors.add(responseCursorID, responseNS, server)
-		} else if requestCursorID != 0 {
-			m.cursors.remove(requestCursorID, requestNS)
-		}
-	}
-	for _, id := range killCursorIDs {
-		m.cursors.remove(id, requestNS)
-	}
+	updateCursorPins(m.cursors, msg.Op, op, server)
 
 	if transactionDetails != nil {
 		if transactionDetails.IsStartTransaction {

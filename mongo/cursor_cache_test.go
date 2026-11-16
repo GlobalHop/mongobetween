@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/x/mongo/driver"
 )
 
@@ -101,4 +102,92 @@ func TestNamespaceKeyDistinguishesCollections(t *testing.T) {
 	assert.False(t, ok)
 	c.remove(5, "test.$cmd.aggregate")
 	assert.Equal(t, 0, c.count())
+}
+
+func cursorReply(t *testing.T, id int64, ns, batchKey string) Operation {
+	return msgOp(t, bson.D{
+		{Key: "cursor", Value: bson.D{{Key: "id", Value: id}, {Key: "ns", Value: ns}, {Key: batchKey, Value: bson.A{}}}},
+		{Key: "ok", Value: 1},
+	})
+}
+
+func getMoreReq(t *testing.T, id int64, db, coll string) Operation {
+	return msgOp(t, bson.D{{Key: "getMore", Value: id}, {Key: "collection", Value: coll}, {Key: "$db", Value: db}})
+}
+
+func TestUpdateCursorPins(t *testing.T) {
+	const id = int64(42)
+	server := &mockServer{1}
+	legacyFind := &opQuery{fullCollectionName: "test.coll"}
+	tests := []struct {
+		name        string
+		findReq     Operation
+		findReply   Operation
+		getMore     Operation
+		getMoreDone Operation
+	}{
+		{
+			"find", msgOp(t, bson.D{{Key: "find", Value: "coll"}, {Key: "$db", Value: "test"}}),
+			cursorReply(t, id, "test.coll", "firstBatch"), getMoreReq(t, id, "test", "coll"),
+			cursorReply(t, 0, "test.coll", "nextBatch"),
+		},
+		{
+			"aggregate on collection", msgOp(t, bson.D{{Key: "aggregate", Value: "coll"}, {Key: "$db", Value: "test"}}),
+			cursorReply(t, id, "test.coll", "firstBatch"), getMoreReq(t, id, "test", "coll"),
+			cursorReply(t, 0, "test.coll", "nextBatch"),
+		},
+		{
+			"aggregate: 1", msgOp(t, bson.D{{Key: "aggregate", Value: int32(1)}, {Key: "$db", Value: "test"}}),
+			cursorReply(t, id, "test.$cmd.aggregate", "firstBatch"), getMoreReq(t, id, "test", "$cmd.aggregate"),
+			cursorReply(t, 0, "test.$cmd.aggregate", "nextBatch"),
+		},
+		{
+			"listCollections", msgOp(t, bson.D{{Key: "listCollections", Value: int32(1)}, {Key: "$db", Value: "test"}}),
+			cursorReply(t, id, "test.$cmd.listCollections", "firstBatch"), getMoreReq(t, id, "test", "$cmd.listCollections"),
+			cursorReply(t, 0, "test.$cmd.listCollections", "nextBatch"),
+		},
+		{
+			"listIndexes", msgOp(t, bson.D{{Key: "listIndexes", Value: "coll"}, {Key: "$db", Value: "test"}}),
+			cursorReply(t, id, "test.coll", "firstBatch"), getMoreReq(t, id, "test", "coll"),
+			cursorReply(t, 0, "test.coll", "nextBatch"),
+		},
+		{
+			"legacy OP_QUERY find", legacyFind,
+			&opReply{cursorID: id}, &opGetMore{fullCollectionName: "test.coll", cursorID: id},
+			&opReply{cursorID: 0},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// the reply (or its request, for legacy) and the getMore agree on the namespace
+			ns := tt.findReply.CursorNamespace()
+			if ns == "" {
+				ns = tt.findReq.CursorNamespace()
+			}
+			assert.Equal(t, ns, tt.getMore.CursorNamespace())
+
+			cache := newCursorCache()
+			updateCursorPins(cache, tt.findReq, tt.findReply, server)
+			gid, _ := tt.getMore.CursorID()
+			got, ok := cache.peek(gid, tt.getMore.CursorNamespace())
+			assert.True(t, ok)
+			assert.Equal(t, server, got)
+
+			// exhausted getMore evicts
+			updateCursorPins(cache, tt.getMore, tt.getMoreDone, server)
+			assert.Equal(t, 0, cache.count())
+
+			// killCursors evicts every ID it names
+			updateCursorPins(cache, tt.findReq, tt.findReply, server)
+			cache.add(43, tt.getMore.CursorNamespace(), server)
+			kill := msgOp(t, bson.D{{Key: "killCursors", Value: "coll"}, {Key: "cursors", Value: bson.A{id, int64(43)}}, {Key: "$db", Value: "test"}})
+			cache.add(id, kill.CursorNamespace(), server)
+			cache.add(43, kill.CursorNamespace(), server)
+			updateCursorPins(cache, kill, msgOp(t, bson.D{{Key: "ok", Value: 1}}), server)
+			_, ok = cache.peek(id, kill.CursorNamespace())
+			assert.False(t, ok)
+			_, ok = cache.peek(43, kill.CursorNamespace())
+			assert.False(t, ok)
+		})
+	}
 }
