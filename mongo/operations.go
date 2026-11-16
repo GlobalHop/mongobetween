@@ -29,6 +29,10 @@ type Operation interface {
 	Encode(responseTo int32) []byte
 	IsIsMaster() bool
 	CursorID() (cursorID int64, ok bool)
+	// CursorNamespace is the full db.coll namespace of a getMore/killCursors request or a cursor reply
+	CursorNamespace() string
+	// KillCursorIDs are the cursor IDs closed by a killCursors request
+	KillCursorIDs() []int64
 	RequestID() int32
 	Error() error
 	Unacknowledged() bool
@@ -100,6 +104,14 @@ func (o *opUnknown) IsIsMaster() bool {
 
 func (o *opUnknown) CursorID() (cursorID int64, ok bool) {
 	return 0, false
+}
+
+func (o *opUnknown) CursorNamespace() string {
+	return ""
+}
+
+func (o *opUnknown) KillCursorIDs() []int64 {
+	return nil
 }
 
 func (o *opUnknown) RequestID() int32 {
@@ -202,6 +214,21 @@ func (q *opQuery) Encode(responseTo int32) []byte {
 
 func (q *opQuery) CursorID() (cursorID int64, ok bool) {
 	return q.query.Lookup("getMore").Int64OK()
+}
+
+func (q *opQuery) CursorNamespace() string {
+	if ns := cursorNamespaceOfCommand(q.query, q.fullCollectionName); ns != "" {
+		return ns
+	}
+	if strings.HasSuffix(q.fullCollectionName, ".$cmd") {
+		return ""
+	}
+	// legacy find: the namespace is the query's collection
+	return q.fullCollectionName
+}
+
+func (q *opQuery) KillCursorIDs() []int64 {
+	return killCursorIDsOf(q.query)
 }
 
 func (q *opQuery) RequestID() int32 {
@@ -412,6 +439,28 @@ func (m *opMsg) CursorID() (cursorID int64, ok bool) {
 	return 0, false
 }
 
+func (m *opMsg) CursorNamespace() string {
+	for _, section := range m.sections {
+		if single, ok := section.(*opMsgSectionSingle); ok {
+			if ns := cursorNamespaceOfCommand(single.msg, ""); ns != "" {
+				return ns
+			}
+		}
+	}
+	return ""
+}
+
+func (m *opMsg) KillCursorIDs() []int64 {
+	for _, section := range m.sections {
+		if single, ok := section.(*opMsgSectionSingle); ok {
+			if ids := killCursorIDsOf(single.msg); ids != nil {
+				return ids
+			}
+		}
+	}
+	return nil
+}
+
 func (m *opMsg) RequestID() int32 {
 	return m.reqID
 }
@@ -562,6 +611,14 @@ func (r *opReply) CursorID() (cursorID int64, ok bool) {
 	return r.cursorID, true
 }
 
+func (r *opReply) CursorNamespace() string {
+	return ""
+}
+
+func (r *opReply) KillCursorIDs() []int64 {
+	return nil
+}
+
 func (r *opReply) RequestID() int32 {
 	return r.reqID
 }
@@ -657,6 +714,14 @@ func (g *opGetMore) CursorID() (cursorID int64, ok bool) {
 	return g.cursorID, true
 }
 
+func (g *opGetMore) CursorNamespace() string {
+	return g.fullCollectionName
+}
+
+func (g *opGetMore) KillCursorIDs() []int64 {
+	return nil
+}
+
 func (g *opGetMore) RequestID() int32 {
 	return g.reqID
 }
@@ -742,6 +807,14 @@ func (u *opUpdate) CursorID() (cursorID int64, ok bool) {
 	return 0, false
 }
 
+func (u *opUpdate) CursorNamespace() string {
+	return ""
+}
+
+func (u *opUpdate) KillCursorIDs() []int64 {
+	return nil
+}
+
 func (u *opUpdate) RequestID() int32 {
 	return u.reqID
 }
@@ -820,6 +893,14 @@ func (i *opInsert) IsIsMaster() bool {
 
 func (i *opInsert) CursorID() (cursorID int64, ok bool) {
 	return 0, false
+}
+
+func (i *opInsert) CursorNamespace() string {
+	return ""
+}
+
+func (i *opInsert) KillCursorIDs() []int64 {
+	return nil
 }
 
 func (i *opInsert) RequestID() int32 {
@@ -909,6 +990,14 @@ func (d *opDelete) CursorID() (cursorID int64, ok bool) {
 	return 0, false
 }
 
+func (d *opDelete) CursorNamespace() string {
+	return ""
+}
+
+func (d *opDelete) KillCursorIDs() []int64 {
+	return nil
+}
+
 func (d *opDelete) RequestID() int32 {
 	return d.reqID
 }
@@ -987,6 +1076,14 @@ func (k *opKillCursors) CursorID() (cursorID int64, ok bool) {
 	return 0, false
 }
 
+func (k *opKillCursors) CursorNamespace() string {
+	return ""
+}
+
+func (k *opKillCursors) KillCursorIDs() []int64 {
+	return k.cursorIDs
+}
+
 func (k *opKillCursors) RequestID() int32 {
 	return k.reqID
 }
@@ -1030,4 +1127,49 @@ func readCString(src []byte) (string, []byte, bool) {
 		return "", src, false
 	}
 	return string(src[:idx]), src[idx+1:], true
+}
+
+// cursorNamespaceOfCommand returns the db.coll namespace of a getMore/killCursors command or of a cursor reply.
+// For legacy OP_QUERY commands defaultDB is derived from fullCollectionName ("db.$cmd"); for plain finds
+// (non-command OP_QUERY) fullCollectionName itself is the namespace.
+func cursorNamespaceOfCommand(doc bsoncore.Document, fullCollectionName string) string {
+	if ns, ok := doc.Lookup("cursor", "ns").StringValueOK(); ok {
+		return ns
+	}
+	var coll string
+	var ok bool
+	switch {
+	case doc.Lookup(string(GetMore)).Data != nil:
+		coll, ok = doc.Lookup("collection").StringValueOK()
+	case doc.Lookup(string(KillCursors)).Data != nil:
+		coll, ok = doc.Lookup(string(KillCursors)).StringValueOK()
+	default:
+		return ""
+	}
+	if !ok {
+		return ""
+	}
+	db, ok := doc.Lookup("$db").StringValueOK()
+	if !ok {
+		db, _, _ = strings.Cut(fullCollectionName, ".")
+	}
+	return db + "." + coll
+}
+
+func killCursorIDsOf(doc bsoncore.Document) []int64 {
+	vals, ok := doc.Lookup("cursors").ArrayOK()
+	if !ok || doc.Lookup(string(KillCursors)).Data == nil {
+		return nil
+	}
+	values, err := vals.Values()
+	if err != nil {
+		return nil
+	}
+	ids := make([]int64, 0, len(values))
+	for _, v := range values {
+		if id, ok := v.Int64OK(); ok {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }

@@ -242,3 +242,49 @@ func TestOpGetMore(t *testing.T) {
 	assert.Equal(t, int32(6), msg.numberToReturn)
 	assert.Equal(t, int64(7), msg.cursorID)
 }
+
+func msgOp(t *testing.T, d bson.D) *opMsg {
+	doc, err := bson.Marshal(d)
+	assert.Nil(t, err)
+	return &opMsg{sections: []opMsgSection{&opMsgSectionSingle{doc}}}
+}
+
+func TestOpMsgGetMoreNamespace(t *testing.T) {
+	op := msgOp(t, bson.D{{Key: "getMore", Value: int64(5)}, {Key: "collection", Value: "$cmd.aggregate"}, {Key: "$db", Value: "test"}})
+	id, ok := op.CursorID()
+	assert.True(t, ok)
+	assert.Equal(t, int64(5), id)
+	assert.Equal(t, "test.$cmd.aggregate", op.CursorNamespace())
+	assert.Nil(t, op.KillCursorIDs())
+}
+
+func TestOpMsgReplyNamespace(t *testing.T) {
+	op := msgOp(t, bson.D{
+		{Key: "cursor", Value: bson.D{{Key: "id", Value: int64(5)}, {Key: "ns", Value: "test.$cmd.aggregate"}, {Key: "firstBatch", Value: bson.A{}}}},
+		{Key: "ok", Value: 1},
+	})
+	assert.Equal(t, "test.$cmd.aggregate", op.CursorNamespace())
+}
+
+func TestOpMsgKillCursors(t *testing.T) {
+	op := msgOp(t, bson.D{{Key: "killCursors", Value: "coll"}, {Key: "cursors", Value: bson.A{int64(1), int64(2)}}, {Key: "$db", Value: "test"}})
+	assert.Equal(t, []int64{1, 2}, op.KillCursorIDs())
+	assert.Equal(t, "test.coll", op.CursorNamespace())
+	cmd, coll := op.CommandAndCollection()
+	assert.Equal(t, KillCursors, cmd)
+	assert.Equal(t, "coll", coll)
+}
+
+func TestOpMsgFindHasNoCursorNamespace(t *testing.T) {
+	op := msgOp(t, bson.D{{Key: "find", Value: "coll"}, {Key: "$db", Value: "test"}})
+	assert.Equal(t, "", op.CursorNamespace())
+	assert.Nil(t, op.KillCursorIDs())
+}
+
+func TestLegacyNamespaces(t *testing.T) {
+	assert.Equal(t, "db.coll", (&opGetMore{fullCollectionName: "db.coll"}).CursorNamespace())
+	k := &opKillCursors{cursorIDs: []int64{7, 8}}
+	assert.Equal(t, "", k.CursorNamespace())
+	assert.Equal(t, []int64{7, 8}, k.KillCursorIDs())
+	assert.Equal(t, "db.coll", (&opQuery{fullCollectionName: "db.coll"}).CursorNamespace())
+}

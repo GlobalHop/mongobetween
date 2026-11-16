@@ -27,6 +27,7 @@ const (
 	Insert            Command = "insert"
 	IsMaster          Command = "isMaster"
 	Ismaster          Command = "ismaster"
+	KillCursors       Command = "killCursors"
 	ListCollections   Command = "listCollections"
 	ListIndexes       Command = "listIndexes"
 	ListDatabases     Command = "listDatabases"
@@ -34,7 +35,7 @@ const (
 	Update            Command = "update"
 )
 
-var collectionCommands = []Command{Aggregate, Count, CreateIndexes, Delete, Distinct, Drop, DropIndexes, Find, FindAndModify, Insert, ListIndexes, MapReduce, Update}
+var collectionCommands = []Command{Aggregate, Count, CreateIndexes, Delete, Distinct, Drop, DropIndexes, Find, FindAndModify, Insert, KillCursors, ListIndexes, MapReduce, Update}
 var int32Commands = []Command{AbortTransaction, Aggregate, CommitTransaction, DropDatabase, Hello, IsMaster, Ismaster, ListCollections, ListDatabases}
 var int64Commands = []Command{GetMore}
 var arrayCommands = []Command{EndSessions}

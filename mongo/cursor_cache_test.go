@@ -90,3 +90,15 @@ func TestRemove(t *testing.T) {
 	cc.remove(13, "db.coll")
 	assert.Equal(t, 2, cc.count())
 }
+
+func TestNamespaceKeyDistinguishesCollections(t *testing.T) {
+	c := newCursorCache()
+	s := &mockServer{1}
+	c.add(5, "test.$cmd.aggregate", s)
+	_, ok := c.peek(5, "test.$cmd.aggregate")
+	assert.True(t, ok)
+	_, ok = c.peek(5, "")
+	assert.False(t, ok)
+	c.remove(5, "test.$cmd.aggregate")
+	assert.Equal(t, 0, c.count())
+}

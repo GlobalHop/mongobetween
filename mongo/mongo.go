@@ -156,12 +156,18 @@ func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
 		return nil, errors.New("connection closed")
 	}
 
-	// CursorID is pinned to a server by CursorID-collection name key
+	// CursorID is pinned to a server by CursorID-namespace (db.coll) key
 	// Transaction is pinned to a server by the issued lsid
 	requestCursorID, _ := msg.Op.CursorID()
-	requestCommand, collection := msg.Op.CommandAndCollection()
+	requestCommand, _ := msg.Op.CommandAndCollection()
+	requestNS := msg.Op.CursorNamespace()
+	killCursorIDs := msg.Op.KillCursorIDs()
+	lookupCursorID := requestCursorID
+	if lookupCursorID == 0 && len(killCursorIDs) > 0 {
+		lookupCursorID = killCursorIDs[0]
+	}
 	transactionDetails := msg.Op.TransactionDetails()
-	server, err := m.selectServer(requestCursorID, collection, transactionDetails)
+	server, err := m.selectServer(lookupCursorID, requestNS, transactionDetails)
 	if err != nil {
 		return nil, err
 	}
@@ -226,10 +232,17 @@ func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
 
 	if responseCursorID, ok := op.CursorID(); ok {
 		if responseCursorID != 0 {
-			m.cursors.add(responseCursorID, collection, server)
+			responseNS := op.CursorNamespace()
+			if responseNS == "" {
+				responseNS = requestNS
+			}
+			m.cursors.add(responseCursorID, responseNS, server)
 		} else if requestCursorID != 0 {
-			m.cursors.remove(requestCursorID, collection)
+			m.cursors.remove(requestCursorID, requestNS)
 		}
+	}
+	for _, id := range killCursorIDs {
+		m.cursors.remove(id, requestNS)
 	}
 
 	if transactionDetails != nil {
@@ -249,7 +262,7 @@ func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
 	}, nil
 }
 
-func (m *Mongo) selectServer(requestCursorID int64, collection string, transDetails *TransactionDetails) (server driver.Server, err error) {
+func (m *Mongo) selectServer(requestCursorID int64, ns string, transDetails *TransactionDetails) (server driver.Server, err error) {
 	defer func(start time.Time) {
 		_ = m.statsd.Timing("server_selection", time.Since(start), []string{fmt.Sprintf("success:%v", err == nil)}, 1)
 	}(time.Now())
@@ -264,9 +277,9 @@ func (m *Mongo) selectServer(requestCursorID int64, collection string, transDeta
 
 	// Search for pinned cursor then
 	if requestCursorID != 0 {
-		server, ok := m.cursors.peek(requestCursorID, collection)
+		server, ok := m.cursors.peek(requestCursorID, ns)
 		if ok {
-			m.log.Debug("Cached cursorID has been found", zap.Int64("cursor", requestCursorID), zap.String("collection", collection))
+			m.log.Debug("Cached cursorID has been found", zap.Int64("cursor", requestCursorID), zap.String("ns", ns))
 			return server, nil
 		}
 	}

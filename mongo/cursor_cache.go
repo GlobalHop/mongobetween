@@ -29,23 +29,23 @@ func (c *cursorCache) count() int {
 	return c.c.Len()
 }
 
-func (c *cursorCache) peek(cursorID int64, collection string) (server driver.Server, ok bool) {
+func (c *cursorCache) peek(cursorID int64, ns string) (server driver.Server, ok bool) {
 
-	v, ok := c.c.Peek(buildKey(cursorID, collection))
+	v, ok := c.c.Peek(buildKey(cursorID, ns))
 	if !ok {
 		return
 	}
 	return v.(driver.Server), true
 }
 
-func (c *cursorCache) add(cursorID int64, collection string, server driver.Server) {
-	c.c.Add(buildKey(cursorID, collection), server)
+func (c *cursorCache) add(cursorID int64, ns string, server driver.Server) {
+	c.c.Add(buildKey(cursorID, ns), server)
 }
 
-func (c *cursorCache) remove(cursorID int64, collection string) {
-	c.c.Remove(buildKey(cursorID, collection))
+func (c *cursorCache) remove(cursorID int64, ns string) {
+	c.c.Remove(buildKey(cursorID, ns))
 }
 
-func buildKey(cursorID int64, collection string) string {
-	return fmt.Sprintf("%d-%s", cursorID, collection)
+func buildKey(cursorID int64, ns string) string {
+	return fmt.Sprintf("%d-%s", cursorID, ns)
 }
