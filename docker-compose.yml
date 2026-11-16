@@ -1,10 +1,10 @@
 services:
   mongo1:
-    image: "mongo:5.0"
+    image: "mongo:8.0"
   mongo2:
-    image: "mongo:5.0"
+    image: "mongo:8.0"
   mongo3:
-    image: "mongo:5.0"
+    image: "mongo:8.0"
 
   rs1: &rs
     image: "mongo:8.0"
