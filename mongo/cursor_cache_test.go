@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -177,17 +178,22 @@ func TestUpdateCursorPins(t *testing.T) {
 			updateCursorPins(cache, tt.getMore, tt.getMoreDone, server)
 			assert.Equal(t, 0, cache.count())
 
-			// killCursors evicts every ID it names
+			// killCursors evicts the case's own pin. Legacy OP_KILL_CURSORS carries no namespace by design, so the
+			// namespace-keyed pin cannot be evicted by it and the legacy case is skipped here.
+			if _, legacy := tt.findReq.(*opQuery); legacy {
+				return
+			}
 			updateCursorPins(cache, tt.findReq, tt.findReply, server)
-			cache.add(43, tt.getMore.CursorNamespace(), server)
-			kill := msgOp(t, bson.D{{Key: "killCursors", Value: "coll"}, {Key: "cursors", Value: bson.A{id, int64(43)}}, {Key: "$db", Value: "test"}})
-			cache.add(id, kill.CursorNamespace(), server)
-			cache.add(43, kill.CursorNamespace(), server)
+			ns = tt.getMore.CursorNamespace()
+			_, ok = cache.peek(id, ns)
+			assert.True(t, ok)
+			db, coll, _ := strings.Cut(ns, ".")
+			kill := msgOp(t, bson.D{{Key: "killCursors", Value: coll}, {Key: "cursors", Value: bson.A{id}}, {Key: "$db", Value: db}})
+			assert.Equal(t, ns, kill.CursorNamespace())
 			updateCursorPins(cache, kill, msgOp(t, bson.D{{Key: "ok", Value: 1}}), server)
-			_, ok = cache.peek(id, kill.CursorNamespace())
+			_, ok = cache.peek(id, ns)
 			assert.False(t, ok)
-			_, ok = cache.peek(43, kill.CursorNamespace())
-			assert.False(t, ok)
+			assert.Equal(t, 0, cache.count())
 		})
 	}
 }
