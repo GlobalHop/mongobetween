@@ -1,0 +1,15 @@
+# Only the Go sources, go.mod and go.sum are needed to build the image.
+.git
+.github
+.idea
+.claude
+.superpowers
+.smoke-certs
+bin
+docs
+scripts
+test
+docker-compose.yml
+Dockerfile
+.dockerignore
+*.md
