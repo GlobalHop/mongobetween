@@ -456,8 +456,12 @@ func (m *Mongo) TransactionCount() int {
 
 // selectionReadPref is the read preference a request is routed with. An absent $readPreference, one that is not a
 // document, or one with an unknown mode falls back to primary; one that is present but invalid (bad tags or
-// maxStalenessSeconds, or a mode that does not allow them) is an ErrInvalidReadPreference.
+// maxStalenessSeconds, or a mode that does not allow them) is an ErrInvalidReadPreference. Write commands always use
+// primary, as through a real mongos, whatever $readPreference they carry.
 func selectionReadPref(op Operation) (*readpref.ReadPref, error) {
+	if command, _ := op.CommandAndCollection(); IsWrite(command) {
+		return readpref.Primary(), nil
+	}
 	rp, ok := op.ReadPref()
 	if rp == nil {
 		if !ok {

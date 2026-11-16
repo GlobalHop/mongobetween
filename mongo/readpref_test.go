@@ -335,3 +335,37 @@ func TestReadPrefSelectorRejectsLowMaxStaleness(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Len(t, selected, 1)
 }
+
+// Writes always go to the primary, as through a real mongos, even when the client attached a $readPreference.
+func TestSelectionReadPrefWritesUsePrimary(t *testing.T) {
+	for _, cmd := range []bson.E{
+		{Key: "insert", Value: "c"},
+		{Key: "update", Value: "c"},
+		{Key: "delete", Value: "c"},
+		{Key: "findAndModify", Value: "c"},
+		{Key: "createIndexes", Value: "c"},
+	} {
+		doc, err := bson.Marshal(bson.D{
+			cmd,
+			{Key: "$db", Value: "test"},
+			{Key: "$readPreference", Value: bson.D{{Key: "mode", Value: "secondary"}}},
+		})
+		assert.NoError(t, err)
+		rp, err := selectionReadPref(NewOpMsg(doc, nil).Op)
+		assert.NoError(t, err, cmd.Key)
+		if assert.NotNil(t, rp, cmd.Key) {
+			assert.Equal(t, readpref.PrimaryMode, rp.Mode(), cmd.Key)
+		}
+	}
+
+	// reads keep their read preference
+	doc, err := bson.Marshal(bson.D{
+		{Key: "find", Value: "c"},
+		{Key: "$db", Value: "test"},
+		{Key: "$readPreference", Value: bson.D{{Key: "mode", Value: "secondary"}}},
+	})
+	assert.NoError(t, err)
+	rp, err := selectionReadPref(NewOpMsg(doc, nil).Op)
+	assert.NoError(t, err)
+	assert.Equal(t, readpref.SecondaryMode, rp.Mode())
+}

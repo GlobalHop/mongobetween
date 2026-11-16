@@ -26,8 +26,8 @@ Originally ranked by importance for **PHP + unsharded Atlas replica set**. Statu
 6. **Read preference support.** **Done.** Mode, tags and `maxStalenessSeconds` are honoured; default primary.
    Analytics nodes are reachable via tags. `7272f94`, `f5b41b9`. A present but invalid `$readPreference`, or one
    server selection rejects (e.g. `maxStalenessSeconds` < 90), is answered with BadValue (code 2, no labels);
-   an absent, non-document or unknown-mode one still falls back to primary. (A `$readPreference` on a write command is
-   routed by it, like a direct replica-set connection; this is a known limitation.)
+   an absent, non-document or unknown-mode one still falls back to primary. Write commands (`IsWrite`) always
+   select the primary, whatever `$readPreference` they carry, as through a real `mongos`.
 7. **Cursor cache keys and `killCursors` eviction.** **Done.** Pins keyed by full namespace. `6f0b37d`,
    `930de3a`, `61e4e29`.
 8. **Graceful shutdown timeout and second signal.** **Done.** `-shutdown-timeout` (30s), second signal kills.

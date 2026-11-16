@@ -88,7 +88,7 @@ URI and driver option rules:
 | `serverApi` (Stable API) | Allowed. The proxy answers the `hello` handshake locally in the same opcode the client used. |
 | `loadBalanced=true` | Do not use. |
 | `directConnection=true` | Pointless; avoid it. |
-| `readPreference=secondary*` (with optional tags and `maxStalenessSeconds`) | Honoured by the proxy and routed to a matching member. If nothing is specified, reads go to the primary. An invalid read preference (for example `maxStalenessSeconds` below 90, or tags with `primary`) gets the non-retryable error code 2 (BadValue). |
+| `readPreference=secondary*` (with optional tags and `maxStalenessSeconds`) | Honoured by the proxy and routed to a matching member. If nothing is specified, reads go to the primary. An invalid read preference (for example `maxStalenessSeconds` below 90, or tags with `primary`) gets the non-retryable error code 2 (BadValue). Write commands always go to the primary, as through a real `mongos`. |
 | `retryWrites`, `retryReads`, transactions, sessions | Supported. |
 | `compressors=` | Has no effect; compression is never negotiated. |
 | Exhaust cursors | Not supported. The proxy strips the `exhaustAllowed` flag so these degrade to normal cursors. |
@@ -214,8 +214,6 @@ connection limit of your Atlas tier and leave headroom for other applications an
 
 - Inbound authentication supports only SCRAM-SHA-256.
 - All proxy users share the privileges of the Atlas user.
-- A `$readPreference` on a write command is used for routing, as on a direct replica-set connection (unlike
-  through a real `mongos`, which sends writes to the primary).
 - Exhaust cursors are not supported (the flag is stripped).
 - `OP_COMPRESSED` is not supported (compression is never negotiated).
 - `speculativeAuthenticate` is not supported, which costs one extra round trip for each new client connection.
