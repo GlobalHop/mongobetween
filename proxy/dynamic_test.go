@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"go.uber.org/zap"
-	"io/ioutil"
 	"os"
 	"testing"
 
@@ -22,7 +21,7 @@ func TestDynamic(t *testing.T) {
 		}
 	  }
 	}`
-	f, err := ioutil.TempFile("", "*.json")
+	f, err := os.CreateTemp("", "*.json")
 	assert.Nil(t, err)
 	defer func() {
 		_ = os.Remove(f.Name())

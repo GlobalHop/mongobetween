@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"os"
 	"sync"
 	"time"
@@ -72,7 +72,7 @@ func (d *Dynamic) start(url string, log *zap.Logger) error {
 }
 
 func (d *Dynamic) poll(url string, log *zap.Logger) error {
-	f, err := ioutil.TempFile("", "*.json")
+	f, err := os.CreateTemp("", "*.json")
 	if err != nil {
 		return err
 	}
@@ -104,7 +104,7 @@ func (d *Dynamic) poll(url string, log *zap.Logger) error {
 		return err
 	}
 
-	body, err := ioutil.ReadAll(f)
+	body, err := io.ReadAll(f)
 	if err != nil {
 		return err
 	}

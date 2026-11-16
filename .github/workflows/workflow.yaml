@@ -31,6 +31,8 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
       - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
 
   salus:
     runs-on: ubuntu-latest

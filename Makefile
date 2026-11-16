@@ -13,7 +13,7 @@ test-docker:
 	./scripts/test-docker.sh
 
 lint:
-	GOGC=75 golangci-lint run --timeout 10m --concurrency 32 -v -E golint ./...
+	GOGC=75 golangci-lint run --timeout 10m --concurrency 32 -v ./...
 
 test-docker-down:
 	docker compose -p mongobetween-test down -v

@@ -3,7 +3,6 @@ package proxy
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"testing"
 	"time"
@@ -150,7 +149,7 @@ func TestProxyWithDynamicConfig(t *testing.T) {
 		}
 	  }
 	}`, proxyPort, proxyPort+1, proxyPort+2, proxyPort+2)
-	f, err := ioutil.TempFile("", "*.json")
+	f, err := os.CreateTemp("", "*.json")
 	assert.Nil(t, err)
 	defer func() {
 		_ = os.Remove(f.Name())
