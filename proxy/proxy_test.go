@@ -24,6 +24,15 @@ var (
 	proxyPort = 27020
 )
 
+// requireDockerHarness skips DB-backed tests outside the docker test harness (CI=true), so a host `go test` never
+// connects to a MongoDB on localhost (host port 27017 belongs to another project).
+func requireDockerHarness(t *testing.T) {
+	t.Helper()
+	if os.Getenv("CI") != "true" {
+		t.Skip("needs the docker test harness (mongo1..3, rs0); run `make test-docker`")
+	}
+}
+
 type Trainer struct {
 	Name string
 	Age  int
@@ -31,6 +40,7 @@ type Trainer struct {
 }
 
 func TestProxy(t *testing.T) {
+	requireDockerHarness(t)
 	proxy := setupProxy(t)
 
 	go func() {
@@ -88,6 +98,7 @@ func TestProxy(t *testing.T) {
 }
 
 func TestProxyUnacknowledgedWrites(t *testing.T) {
+	requireDockerHarness(t)
 	proxy := setupProxy(t)
 	defer proxy.Shutdown()
 
@@ -132,6 +143,7 @@ func TestProxyUnacknowledgedWrites(t *testing.T) {
 }
 
 func TestProxyWithDynamicConfig(t *testing.T) {
+	requireDockerHarness(t)
 	collection := "test_proxy_with_dynamic_config"
 
 	json := fmt.Sprintf(`{
@@ -245,6 +257,7 @@ func TestProxyWithDynamicConfig(t *testing.T) {
 }
 
 func setupProxy(t *testing.T) *Proxy {
+	requireDockerHarness(t)
 	t.Helper()
 
 	dynamic, err := NewDynamic("", zap.L())
@@ -289,6 +302,7 @@ func setupProxies(t *testing.T, d *Dynamic, startPort int, count int) []*Proxy {
 
 func setupClient(t *testing.T, host string, port int, clientOpts ...*options.ClientOptions) *mongo.Client {
 	t.Helper()
+	requireDockerHarness(t)
 
 	// Base options should only use ApplyURI. The full set should have the user-supplied options after uriOpts so they
 	// will win out in the case of conflicts.
@@ -315,6 +329,7 @@ func setupClient(t *testing.T, host string, port int, clientOpts ...*options.Cli
 }
 
 func TestProxyAppIssuedHandshakeCommands(t *testing.T) {
+	requireDockerHarness(t)
 	proxy := setupProxy(t)
 	defer proxy.Shutdown()
 
@@ -391,6 +406,7 @@ func TestProxyReturnsErrorWhenUpstreamUnavailable(t *testing.T) {
 // TestUpstreamCursorNamespaces verifies against a real mongod that cursor.ns in a reply matches the namespace a
 // driver uses for the following getMore ($db + "." + collection), which is how cursors are pinned.
 func TestUpstreamCursorNamespaces(t *testing.T) {
+	requireDockerHarness(t)
 	client := setupClient(t, "mongo1", 27017)
 	defer func() { _ = client.Disconnect(ctx) }()
 
@@ -435,6 +451,7 @@ func TestUpstreamCursorNamespaces(t *testing.T) {
 }
 
 func TestProxyShutdownWithTimeoutClosesIdleClients(t *testing.T) {
+	requireDockerHarness(t)
 	const port = 27027
 	sd, err := statsd.New("localhost:8125")
 	assert.Nil(t, err)

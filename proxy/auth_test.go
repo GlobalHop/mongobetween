@@ -1,10 +1,12 @@
 package proxy
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,6 +22,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
 	"go.mongodb.org/mongo-driver/x/mongo/driver"
+	"go.mongodb.org/mongo-driver/x/mongo/driver/wiremessage"
 	"go.uber.org/zap"
 
 	mongob "github.com/coinbase/mongobetween/mongo"
@@ -261,6 +264,99 @@ func TestAuthSessionSASL(t *testing.T) {
 		var s authSession
 		_, err := s.saslStart(u, saslStartDoc(t, "SCRAM-SHA-256", "garbage", true))
 		assert.Equal(t, int32(18), authCode(err))
+		// an empty gs2 flag makes the scram library index an empty string
+		assert.NotPanics(t, func() {
+			_, err = s.saslStart(u, saslStartDoc(t, "SCRAM-SHA-256", ",,n=app,r=abc", true))
+		})
+		assert.Equal(t, int32(18), authCode(err))
+	})
+
+	for _, proofLen := range []int{64, 31, 0} {
+		t.Run(fmt.Sprintf("proof of %d bytes", proofLen), func(t *testing.T) {
+			client, _ := scram.SHA256.NewClient("app", "s3cret", "")
+			cc := client.NewConversation()
+			var s authSession
+			c1, _ := cc.Step("")
+			reply, err := s.saslStart(u, saslStartDoc(t, "SCRAM-SHA-256", c1, true))
+			assert.NoError(t, err)
+			r := decodeSASLReply(t, reply)
+			c2, err := cc.Step(string(r.Payload))
+			assert.NoError(t, err)
+			// keep channel binding and nonce, swap the proof for one of the wrong length
+			forged := c2[:strings.LastIndex(c2, ",p=")] + ",p=" + base64.StdEncoding.EncodeToString(make([]byte, proofLen))
+			assert.NotPanics(t, func() {
+				_, err = s.saslContinue(u, saslContinueDoc(t, r.ConversationID, forged))
+			})
+			assert.Equal(t, int32(18), authCode(err))
+			assert.False(t, s.authenticated)
+			assert.Nil(t, s.conv)
+		})
+	}
+}
+
+func TestSafeStepRecoversPanic(t *testing.T) {
+	// a zero ServerConversation has no credential lookup: Step panics on a nil func call
+	out, err := safeStep(&scram.ServerConversation{}, "n,,n=app,r=abc")
+	assert.Equal(t, "", out)
+	assert.True(t, errors.Is(err, errSCRAMPanic), "%v", err)
+}
+
+func opMsgOperation(t *testing.T, doc bson.D) mongob.Operation {
+	t.Helper()
+	raw, err := bson.Marshal(doc)
+	assert.NoError(t, err)
+	idx, wm := wiremessage.AppendHeaderStart(nil, 1, 0, wiremessage.OpMsg)
+	wm = wiremessage.AppendMsgFlags(wm, 0)
+	wm = wiremessage.AppendMsgSectionType(wm, wiremessage.SingleDocument)
+	wm = append(wm, raw...)
+	wm = bsoncore.UpdateLength(wm, idx, int32(len(wm[idx:])))
+	op, err := mongob.Decode(wm)
+	assert.NoError(t, err)
+	return op
+}
+
+func replyOK(t *testing.T, res *mongob.Message) float64 {
+	t.Helper()
+	if !assert.NotNil(t, res) {
+		return -1
+	}
+	op, err := mongob.Decode(res.Wm)
+	assert.NoError(t, err)
+	assert.Equal(t, wiremessage.OpMsg, op.OpCode())
+	doc, ok := mongob.CommandDocument(op)
+	assert.True(t, ok)
+	return doc.Lookup("ok").Double()
+}
+
+func TestLogoutAnsweredLocally(t *testing.T) {
+	logout := bson.D{{Key: "logout", Value: int32(1)}, {Key: "$db", Value: "admin"}}
+
+	t.Run("auth off", func(t *testing.T) {
+		c := &connection{log: zap.NewNop()}
+		res, handled, err := c.authorize(opMsgOperation(t, logout))
+		assert.NoError(t, err)
+		assert.True(t, handled, "logout must never be forwarded upstream")
+		assert.Equal(t, 1.0, replyOK(t, res))
+
+		_, handled, _ = c.authorize(opMsgOperation(t, bson.D{{Key: "find", Value: "c"}, {Key: "$db", Value: "test"}}))
+		assert.False(t, handled)
+	})
+
+	t.Run("auth on", func(t *testing.T) {
+		u, err := LoadUsers(writeUsersFile(t, authTestUsersFile))
+		assert.NoError(t, err)
+		c := &connection{log: zap.NewNop(), users: u, auth: authSession{authenticated: true, user: "app"}}
+		res, handled, err := c.authorize(opMsgOperation(t, logout))
+		assert.NoError(t, err)
+		assert.True(t, handled)
+		assert.Equal(t, 1.0, replyOK(t, res))
+		assert.False(t, c.auth.authenticated)
+		assert.Equal(t, "", c.auth.user)
+
+		res, handled, err = c.authorize(opMsgOperation(t, bson.D{{Key: "find", Value: "c"}, {Key: "$db", Value: "test"}}))
+		assert.NoError(t, err)
+		assert.True(t, handled)
+		assert.Equal(t, 0.0, replyOK(t, res))
 	})
 }
 
@@ -268,15 +364,15 @@ var (
 	authProxyOnce sync.Once
 )
 
-func upstreamURI() string {
-	if os.Getenv("CI") == "true" {
-		return "mongodb://mongo1:27017/test"
-	}
-	return "mongodb://localhost:27017/test"
+func upstreamURI(t *testing.T) string {
+	t.Helper()
+	requireDockerHarness(t)
+	return "mongodb://mongo1:27017/test"
 }
 
 func startAuthProxy(t *testing.T, port int, usersFile string, upstreamOpts *options.ClientOptions) *Proxy {
 	t.Helper()
+	requireDockerHarness(t)
 	users, err := LoadUsers(writeUsersFile(t, usersFile))
 	assert.NoError(t, err)
 	sd, err := statsd.New("localhost:8125")
@@ -297,8 +393,9 @@ func startAuthProxy(t *testing.T, port int, usersFile string, upstreamOpts *opti
 // sharedAuthProxy starts (once per test binary) the auth-enabled proxy on authProxyPort with users-file app:s3cret.
 func sharedAuthProxy(t *testing.T) {
 	t.Helper()
+	requireDockerHarness(t)
 	authProxyOnce.Do(func() {
-		startAuthProxy(t, authProxyPort, authTestUsersFile, options.Client().ApplyURI(upstreamURI()))
+		startAuthProxy(t, authProxyPort, authTestUsersFile, options.Client().ApplyURI(upstreamURI(t)))
 	})
 }
 
@@ -388,22 +485,23 @@ func TestProxyAuthRequired(t *testing.T) {
 
 func TestProxyAuthUpstreamCredsNotAccepted(t *testing.T) {
 	// Create the upstream user directly on mongo1 so the proxy's upstream pool authenticates with it.
-	direct, err := mongo.Connect(ctx, options.Client().ApplyURI(upstreamURI()))
+	direct, err := mongo.Connect(ctx, options.Client().ApplyURI(upstreamURI(t)))
 	assert.NoError(t, err)
 	defer func() { _ = direct.Disconnect(ctx) }()
-	admin := direct.Database("admin")
-	dropUpstreamUser := func() { _ = admin.RunCommand(ctx, bson.D{{Key: "dropUser", Value: upstreamUser}}).Err() }
+	// least privilege: readWrite on the test database only
+	testDB := direct.Database("test")
+	dropUpstreamUser := func() { _ = testDB.RunCommand(ctx, bson.D{{Key: "dropUser", Value: upstreamUser}}).Err() }
 	dropUpstreamUser()
 	defer dropUpstreamUser()
-	assert.NoError(t, admin.RunCommand(ctx, bson.D{
+	assert.NoError(t, testDB.RunCommand(ctx, bson.D{
 		{Key: "createUser", Value: upstreamUser},
 		{Key: "pwd", Value: upstreamPassword},
-		{Key: "roles", Value: bson.A{"root"}},
+		{Key: "roles", Value: bson.A{bson.D{{Key: "role", Value: "readWrite"}, {Key: "db", Value: "test"}}}},
 		{Key: "mechanisms", Value: bson.A{"SCRAM-SHA-256"}},
 	}).Err())
 
-	upstreamOpts := options.Client().ApplyURI(upstreamURI()).
-		SetAuth(options.Credential{Username: upstreamUser, Password: upstreamPassword, AuthSource: "admin"})
+	upstreamOpts := options.Client().ApplyURI(upstreamURI(t)).
+		SetAuth(options.Credential{Username: upstreamUser, Password: upstreamPassword, AuthSource: "test"})
 	p := startAuthProxy(t, authUpstreamPort, authTestUsersFile, upstreamOpts)
 	defer p.Kill()
 
@@ -416,9 +514,58 @@ func TestProxyAuthUpstreamCredsNotAccepted(t *testing.T) {
 
 	// the upstream credentials are not proxy credentials
 	bad := connectAuthClient(t, authUpstreamPort, options.Client().
-		SetAuth(options.Credential{Username: upstreamUser, Password: upstreamPassword, AuthSource: "admin"}))
+		SetAuth(options.Credential{Username: upstreamUser, Password: upstreamPassword, AuthSource: "test"}))
 	defer func() { _ = bad.Disconnect(ctx) }()
 	err = bad.Ping(ctx, nil)
 	assert.Error(t, err)
 	assert.Equal(t, int32(18), serverCode(err), "%v", err)
+}
+
+func TestProxyAuthLogout(t *testing.T) {
+	sharedAuthProxy(t)
+
+	client := connectAuthClient(t, authProxyPort, options.Client().SetMaxPoolSize(1).
+		SetAuth(options.Credential{Username: "app", Password: authTestPassword}))
+	defer func() { _ = client.Disconnect(ctx) }()
+
+	coll := client.Database("test").Collection("test_proxy_auth")
+	_, err := coll.CountDocuments(ctx, bson.D{})
+	assert.NoError(t, err)
+
+	var res bson.M
+	assert.NoError(t, client.Database("admin").RunCommand(ctx, bson.D{{Key: "logout", Value: 1}}).Decode(&res))
+	assert.Equal(t, 1.0, res["ok"])
+
+	// same (single) pooled connection, now logged out
+	_, err = coll.Find(ctx, bson.D{})
+	var ce mongo.CommandError
+	assert.True(t, errors.As(err, &ce), "%v", err)
+	assert.Equal(t, int32(13), ce.Code)
+}
+
+func TestProxyLogoutAuthOff(t *testing.T) {
+	requireDockerHarness(t)
+	const port = 27029
+	sd, err := statsd.New("localhost:8125")
+	assert.NoError(t, err)
+	dynamic, err := NewDynamic("", zap.L())
+	assert.NoError(t, err)
+	upstream, err := mongob.Connect(zap.L(), sd, options.Client().ApplyURI(upstreamURI(t)), mongob.Settings{})
+	assert.NoError(t, err)
+	defer upstream.Close()
+	p, err := NewProxy(zap.L(), sd, "label", "tcp4", fmt.Sprintf(":%d", port), false,
+		func(string) *mongob.Mongo { return upstream }, dynamic, nil, nil)
+	assert.NoError(t, err)
+	go func() { _ = p.Run() }()
+	defer p.Kill()
+
+	client := connectAuthClient(t, port, options.Client().SetMaxPoolSize(1))
+	defer func() { _ = client.Disconnect(ctx) }()
+
+	var res bson.M
+	assert.NoError(t, client.Database("admin").RunCommand(ctx, bson.D{{Key: "logout", Value: 1}}).Decode(&res))
+	assert.Equal(t, 1.0, res["ok"])
+
+	_, err = client.Database("test").Collection("test_proxy_auth").CountDocuments(ctx, bson.D{})
+	assert.NoError(t, err)
 }

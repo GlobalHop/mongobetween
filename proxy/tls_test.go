@@ -107,6 +107,7 @@ func TestLoadServerTLSConfig(t *testing.T) {
 }
 
 func TestProxyTLS(t *testing.T) {
+	requireDockerHarness(t)
 	const port = 27025
 	certs := genTestCerts(t)
 	tlsCfg, err := loadServerTLSConfig(certs.certFile, certs.keyFile, "")

@@ -199,6 +199,9 @@ type authSession struct {
 type authError struct {
 	pe   mongo.ProxyError
 	user string
+
+	// recovered is set when the scram library panicked on the client's input.
+	recovered bool
 }
 
 func (e *authError) Error() string {
@@ -210,6 +213,17 @@ func authFailed(user, message string) *authError {
 		pe:   mongo.ProxyError{Code: codeAuthenticationFailed, CodeName: "AuthenticationFailed", Message: message},
 		user: user,
 	}
+}
+
+// stepFailed renders a failed conv.Step. The username is only read when the library did not panic, since a
+// panicking conversation may be half-initialised.
+func stepFailed(conv *scram.ServerConversation, err error) *authError {
+	if errors.Is(err, errSCRAMPanic) {
+		ae := authFailed("", authenticationFailedMsg)
+		ae.recovered = true
+		return ae
+	}
+	return authFailed(conv.Username(), authenticationFailedMsg)
 }
 
 // saslStart begins a new SCRAM-SHA-256 conversation, abandoning any conversation in progress. An existing
@@ -225,10 +239,13 @@ func (s *authSession) saslStart(u *Users, doc bsoncore.Document) (bsoncore.Docum
 		return nil, authFailed("", authenticationFailedMsg)
 	}
 
+	if !validClientFirst(string(payload)) {
+		return nil, authFailed("", authenticationFailedMsg)
+	}
 	conv := u.server.NewConversation()
-	out, err := conv.Step(string(payload))
+	out, err := safeStep(conv, string(payload))
 	if err != nil {
-		return nil, authFailed(conv.Username(), authenticationFailedMsg)
+		return nil, stepFailed(conv, err)
 	}
 	if authz := conv.AuthzID(); authz != "" && authz != conv.Username() {
 		return nil, authFailed(conv.Username(), authenticationFailedMsg)
@@ -269,8 +286,14 @@ func (s *authSession) saslContinue(u *Users, doc bsoncore.Document) (bsoncore.Do
 		return saslReply(s.convID, true, nil)
 	}
 
-	out, err := conv.Step(string(payload))
-	if err != nil || !conv.Valid() {
+	if !validClientFinal(string(payload)) {
+		return nil, authFailed(user, authenticationFailedMsg)
+	}
+	out, err := safeStep(conv, string(payload))
+	if err != nil {
+		return nil, stepFailed(conv, err)
+	}
+	if !conv.Valid() {
 		return nil, authFailed(user, authenticationFailedMsg)
 	}
 	if s.skipEmptyExchange {
@@ -298,15 +321,31 @@ func saslReply(convID int32, done bool, payload []byte) (bsoncore.Document, erro
 	})
 }
 
-// authorize enforces inbound authentication for op. When handled is true the request has been answered locally and
-// must not be forwarded; reply is what to send (nil for nothing). A non-nil err closes the connection.
+// authorize enforces inbound authentication for op and answers logout. When handled is true the request has been
+// answered locally and must not be forwarded; reply is what to send (nil for nothing). A non-nil err closes the
+// connection.
 func (c *connection) authorize(op mongo.Operation) (reply *mongo.Message, handled bool, err error) {
-	if c.users == nil || op.IsIsMaster() {
+	if op.IsIsMaster() {
 		return nil, false, nil
 	}
 
 	doc, isCommand := mongo.CommandDocument(op)
 	name := mongo.CommandName(doc)
+
+	// logout never reaches a pooled upstream connection, where it would log out the proxy's own upstream user for
+	// every client sharing it. With auth on it ends this connection's proxy session; with auth off it is a no-op.
+	if name == "logout" {
+		if c.auth.authenticated {
+			c.log.Info("Logged out", zap.String("user", c.auth.user))
+		}
+		c.auth = authSession{convID: c.auth.convID}
+		res, err := mongo.DocumentResponse(op, okDocument)
+		return res, true, err
+	}
+
+	if c.users == nil {
+		return nil, false, nil
+	}
 
 	// SASL is always handled locally when inbound auth is on, so it never reaches an upstream connection.
 	switch name {
@@ -367,7 +406,42 @@ func (c *connection) handleSASL(op mongo.Operation, name string, doc bsoncore.Do
 }
 
 func (c *connection) authFailureReply(op mongo.Operation, ae *authError) (*mongo.Message, bool, error) {
+	if ae.recovered {
+		c.log.Debug("Recovered SCRAM library panic on client input")
+	}
 	c.log.Warn("Authentication failed", zap.String("user", ae.user))
 	res, err := mongo.ErrorResponse(op, ae.pe)
 	return res, true, err
+}
+
+// errSCRAMPanic reports a panic recovered from the scram library while processing client input.
+var errSCRAMPanic = errors.New("scram: recovered panic")
+
+// safeStep is conv.Step with any library panic turned into errSCRAMPanic. Input is validated before Step (see
+// validClientFirst / validClientFinal); this is defence in depth so client bytes can never crash the connection.
+func safeStep(conv *scram.ServerConversation, msg string) (out string, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			out, err = "", errSCRAMPanic
+		}
+	}()
+	return conv.Step(msg)
+}
+
+// validClientFirst checks the gs2 header flag: xdg-go/scram v1.1.2 indexes it without a length check. Channel
+// binding ("p=") is not supported, so only "n" and "y" are accepted.
+func validClientFirst(msg string) bool {
+	return strings.HasPrefix(msg, "n,") || strings.HasPrefix(msg, "y,")
+}
+
+// validClientFinal checks that the proof (the last field, as the scram library parses it) decodes to exactly one
+// SHA-256 digest: xdg-go/scram v1.1.2 XORs it against a 32-byte signature indexed by the proof length.
+func validClientFinal(msg string) bool {
+	last := msg[strings.LastIndex(msg, ",")+1:]
+	encoded, ok := strings.CutPrefix(last, "p=")
+	if !ok {
+		return false
+	}
+	proof, err := base64.StdEncoding.DecodeString(encoded)
+	return err == nil && len(proof) == sha256.Size
 }

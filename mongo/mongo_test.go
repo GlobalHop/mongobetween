@@ -42,7 +42,17 @@ func insertOpMsg(t *testing.T) *mongo.Message {
 	return mongo.NewOpMsg(insert, []bsoncore.Document{doc1, doc2})
 }
 
+// requireDockerHarness skips DB-backed tests outside the docker test harness (CI=true), so a host `go test` never
+// connects to a MongoDB on localhost (host port 27017 belongs to another project).
+func requireDockerHarness(t *testing.T) {
+	t.Helper()
+	if os.Getenv("CI") != "true" {
+		t.Skip("needs the docker test harness (mongo1..3); run `make test-docker`")
+	}
+}
+
 func TestRoundTrip(t *testing.T) {
+	requireDockerHarness(t)
 	uri := "mongodb://localhost:27017/test"
 	if os.Getenv("CI") == "true" {
 		uri = "mongodb://mongo1:27017/test"
@@ -67,6 +77,7 @@ func TestRoundTrip(t *testing.T) {
 }
 
 func TestRoundTripProcessError(t *testing.T) {
+	requireDockerHarness(t)
 	uri := "mongodb://localhost:27017/test"
 	if os.Getenv("CI") == "true" {
 		uri = "mongodb://mongo1:27017/test"

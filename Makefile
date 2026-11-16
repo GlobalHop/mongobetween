@@ -1,4 +1,4 @@
-.PHONY: build docker test test-docker test-docker-down lint
+.PHONY: build docker test test-unit test-docker test-docker-down lint
 
 build:
 	go build -o bin/mongobetween .
@@ -6,7 +6,11 @@ build:
 docker:
 	docker-compose up
 
-test:
+# Full suite, always inside the docker harness (never against a MongoDB on the host).
+test: test-docker
+
+# Host-only run: DB-backed tests skip unless CI=true, so this runs only DB-free unit tests.
+test-unit:
 	go test -count 1 -race ./...
 
 test-docker:

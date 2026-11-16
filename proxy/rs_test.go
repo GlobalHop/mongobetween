@@ -13,6 +13,7 @@ import (
 )
 
 func rsURI(t *testing.T) string {
+	requireDockerHarness(t)
 	uri := os.Getenv("MONGOBETWEEN_RS_URI")
 	if uri == "" {
 		t.Skip("MONGOBETWEEN_RS_URI not set")
