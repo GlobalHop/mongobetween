@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"go.mongodb.org/mongo-driver/bson"
@@ -221,4 +222,56 @@ func TestGetMoreOperation_CursorPinning(t *testing.T) {
 	cursorID, cursorOK := getMoreOp.CursorID()
 	assert.True(t, cursorOK)
 	assert.Equal(t, int64(12345), cursorID)
+}
+
+func rpDoc(t *testing.T, rp bson.D) bsoncore.Document {
+	t.Helper()
+	doc, err := bson.Marshal(bson.D{
+		{Key: "find", Value: "test"},
+		{Key: "$db", Value: "testdb"},
+		{Key: "$readPreference", Value: rp},
+	})
+	assert.NoError(t, err)
+	return doc
+}
+
+func TestExtractReadPrefTags(t *testing.T) {
+	doc := rpDoc(t, bson.D{
+		{Key: "mode", Value: "secondary"},
+		{Key: "tags", Value: bson.A{bson.D{{Key: "nodeType", Value: "ANALYTICS"}}, bson.D{}}},
+	})
+
+	rp, ok := extractReadPref(doc)
+	assert.True(t, ok)
+	assert.NotNil(t, rp)
+	assert.Equal(t, readpref.SecondaryMode, rp.Mode())
+	sets := rp.TagSets()
+	assert.Len(t, sets, 2)
+	assert.Equal(t, "nodeType", sets[0][0].Name)
+	assert.Equal(t, "ANALYTICS", sets[0][0].Value)
+	assert.Len(t, sets[1], 0)
+}
+
+func TestExtractReadPrefMaxStaleness(t *testing.T) {
+	for name, v := range map[string]interface{}{"int32": int32(90), "int64": int64(90), "double": float64(90)} {
+		t.Run(name, func(t *testing.T) {
+			doc := rpDoc(t, bson.D{{Key: "mode", Value: "secondaryPreferred"}, {Key: "maxStalenessSeconds", Value: v}})
+			rp, ok := extractReadPref(doc)
+			assert.True(t, ok)
+			assert.NotNil(t, rp)
+			d, set := rp.MaxStaleness()
+			assert.True(t, set)
+			assert.Equal(t, 90*time.Second, d)
+		})
+	}
+}
+
+func TestExtractReadPrefPrimaryWithTagsInvalid(t *testing.T) {
+	doc := rpDoc(t, bson.D{
+		{Key: "mode", Value: "primary"},
+		{Key: "tags", Value: bson.A{bson.D{{Key: "a", Value: "b"}}}},
+	})
+	rp, ok := extractReadPref(doc)
+	assert.False(t, ok)
+	assert.Nil(t, rp)
 }

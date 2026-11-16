@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"go.mongodb.org/mongo-driver/tag"
 	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
 	"go.mongodb.org/mongo-driver/x/mongo/driver"
 	"go.mongodb.org/mongo-driver/x/mongo/driver/wiremessage"
@@ -1248,25 +1251,71 @@ func extractReadPref(doc bsoncore.Document) (*readpref.ReadPref, bool) {
 		return readpref.Primary(), false
 	}
 
-	// Parse the mode string and create appropriate read preference
-	var rp *readpref.ReadPref
-	switch mode {
-	case "primary":
-		rp = readpref.Primary()
-	case "primaryPreferred":
-		rp = readpref.PrimaryPreferred()
-	case "secondary":
-		rp = readpref.Secondary()
-	case "secondaryPreferred":
-		rp = readpref.SecondaryPreferred()
-	case "nearest":
-		rp = readpref.Nearest()
-	default:
+	m, err := readpref.ModeFromString(mode)
+	if err != nil {
 		return readpref.Primary(), false
 	}
 
-	// TODO: Support tag sets and maxStalenessSeconds if needed
-	// For now, we just use the mode without additional options
+	var opts []readpref.Option
+	if tagsVal, found := rpDoc.Lookup("tags").ArrayOK(); found {
+		tagSets, ok := parseTagSets(tagsVal)
+		if !ok {
+			return nil, false
+		}
+		opts = append(opts, readpref.WithTagSets(tagSets...))
+	}
+	if msVal := rpDoc.Lookup("maxStalenessSeconds"); msVal.Type != 0 {
+		secs, ok := numericToInt64(msVal)
+		if !ok {
+			return nil, false
+		}
+		opts = append(opts, readpref.WithMaxStaleness(time.Duration(secs)*time.Second))
+	}
 
+	// readpref.New rejects invalid combinations (e.g. primary with tags or maxStaleness)
+	rp, err := readpref.New(m, opts...)
+	if err != nil {
+		return nil, false
+	}
 	return rp, true
+}
+
+func parseTagSets(arr bsoncore.Array) ([]tag.Set, bool) {
+	values, err := arr.Values()
+	if err != nil {
+		return nil, false
+	}
+	sets := make([]tag.Set, 0, len(values))
+	for _, v := range values {
+		d, ok := v.DocumentOK()
+		if !ok {
+			return nil, false
+		}
+		elems, err := d.Elements()
+		if err != nil {
+			return nil, false
+		}
+		set := make(tag.Set, 0, len(elems))
+		for _, e := range elems {
+			val, ok := e.Value().StringValueOK()
+			if !ok {
+				return nil, false
+			}
+			set = append(set, tag.Tag{Name: e.Key(), Value: val})
+		}
+		sets = append(sets, set)
+	}
+	return sets, true
+}
+
+func numericToInt64(v bsoncore.Value) (int64, bool) {
+	switch v.Type {
+	case bson.TypeInt32:
+		return int64(v.Int32()), true
+	case bson.TypeInt64:
+		return v.Int64(), true
+	case bson.TypeDouble:
+		return int64(v.Double()), true
+	}
+	return 0, false
 }
