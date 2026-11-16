@@ -1,10 +1,10 @@
 # mongobetween
 `mongobetween` is a lightweight MongoDB connection pooler written in Golang. It's primary function is to handle a large number of incoming connections, and multiplex them across a smaller connection pool to one or more MongoDB clusters.
 
-`mongobetween` is used in production at Coinbase. It is currently deployed as a Docker sidecar alongside a Rails application using the [Ruby Mongo driver](https://github.com/mongodb/mongo-ruby-driver), connecting to a number of sharded MongoDB clusters. It was designed to connect to `mongos` routers who are responsible for server selection for read/write preferences (connecting directly to a replica set's `mongod` instances hasn't been battle tested).
+`mongobetween` is used in production at Coinbase. It is currently deployed as a Docker sidecar alongside a Rails application using the [Ruby Mongo driver](https://github.com/mongodb/mongo-ruby-driver), connecting to a number of sharded MongoDB clusters. It was originally designed to connect to `mongos` routers, which are responsible for server selection for read/write preferences. This fork also supports unsharded replica sets (for example MongoDB Atlas): the proxy honours the client's read preference (mode, tags and `maxStalenessSeconds`; primary by default), returns retryable MongoDB error replies during failovers instead of closing sockets, and can mirror the upstream wire version. It has been verified against a docker replica set and a PHP ext-mongodb client, but not yet against production Atlas traffic; see [docs/atlas-poc.md](docs/atlas-poc.md) for the proof-of-concept runbook.
 
 ### How it works
-`mongobetween` listens for incoming connections from an application, and proxies any queries to the [MongoDB Go driver](https://github.com/mongodb/mongo-go-driver) which is connected to a MongoDB cluster. It also intercepts any `ismaster` commands from the application, and responds with `"I'm a shard router (mongos)"`, without proxying. This means `mongobetween` appears to the application as an always-available MongoDB shard router, and any MongoDB connection issues or failovers are handled internally by the Go driver.
+`mongobetween` listens for incoming connections from an application, and proxies any queries to the [MongoDB Go driver](https://github.com/mongodb/mongo-go-driver) which is connected to a MongoDB cluster. It also intercepts any `hello` / `isMaster` handshake from the application (in the opcode the client used), and responds with `"I'm a shard router (mongos)"`, without proxying. The reported `maxWireVersion` mirrors the real upstream unless overridden with `-max-wire-version`. This means `mongobetween` appears to the application as an always-available MongoDB shard router, and any MongoDB connection issues or failovers are handled internally by the Go driver.
 
 ### Installation
 ```
@@ -14,8 +14,20 @@ go install github.com/coinbase/mongobetween
 ### Usage
 ```
 Usage: mongobetween [OPTIONS] address1=uri1 [address2=uri2] ...
+  -auth-users-file string
+    	File of proxy-only username:password lines enabling inbound SCRAM-SHA-256 authentication (empty = auth off)
+  -checkout-timeout duration
+    	Maximum time to wait for an upstream connection checkout (0 = unbounded) (default 10s)
+  -dynamic string
+    	File or URL to query for dynamic configuration
+  -enable-sdam-logging
+    	Enable SDAM(Server Discovery And Monitoring) logging
+  -enable-sdam-metrics
+    	Enable SDAM(Server Discovery And Monitoring) metrics
   -loglevel string
     	One of: debug, info, warn, error, dpanic, panic, fatal (default "info")
+  -max-wire-version int
+    	maxWireVersion reported to clients in handshake replies (0 = mirror upstream)
   -network string
     	One of: tcp, tcp4, tcp6, unix or unixpacket (default "tcp4")
   -password string
@@ -24,18 +36,22 @@ Usage: mongobetween [OPTIONS] address1=uri1 [address2=uri2] ...
     	Ping downstream MongoDB before listening
   -pretty
     	Pretty print logging
+  -require-upstream-tls
+    	Refuse to start unless every upstream cluster is configured with TLS
+  -shutdown-timeout duration
+    	Maximum time to wait for client connections to close on shutdown before force closing them (default 30s)
   -statsd string
     	Statsd address (default "localhost:8125")
+  -tls-ca-file string
+    	CA bundle (PEM); when set, client certificates are required and verified (mTLS)
+  -tls-cert-file string
+    	Server certificate (PEM) enabling TLS on the client listener
+  -tls-key-file string
+    	Server private key (PEM) enabling TLS on the client listener
   -unlink
     	Unlink existing unix sockets before listening
   -username string
     	MongoDB username
-  -dynamic string
-    	File or URL to query for dynamic configuration
-  -enable-sdam-metrics
-        Enable SDAM(Server Discovery And Monitoring) metrics
-  -enable-sdam-logging
-        Enable SDAM(Server Discovery And Monitoring) logging
 ```
 
 TCP socket example:
@@ -56,6 +72,12 @@ mongobetween -network unix \
 ```
 
 The `label` query parameter in the connection URI is used to any tag statsd metrics or logs for that connection.
+
+### Replica sets and PHP
+
+For an unsharded replica set (such as Atlas), keep the Atlas URI on the proxy side only and point the PHP application at the proxy with a plain `mongodb://host:port` URI. Do not use `mongodb+srv`, `replicaSet=` or `loadBalanced` in the application URI. `tls=true` requires the proxy to run with `-tls-cert-file`/`-tls-key-file`, and credentials in the application URI must be proxy users defined in `-auth-users-file` (never the Atlas user; SCRAM-SHA-256 only). The full URI rules, an example users file, the failover test procedure, metrics to watch and the connection sizing formula are in [docs/atlas-poc.md](docs/atlas-poc.md).
+
+Known limitations: only SCRAM-SHA-256 for inbound auth; all proxy users share the upstream user's privileges; a `$readPreference` on a write command is used for routing; exhaust cursors and `OP_COMPRESSED` are not supported; `speculativeAuthenticate` is not supported (one extra round trip per new connection); the Go driver is v1.
 
 ### Dynamic configuration
 
@@ -107,6 +129,14 @@ Current known missing features:
  - `mongobetween.pool_event.connection_checked_in` (Counter) - Go driver connection checked in
  - `mongobetween.pool_event.connection_pool_cleared` (Counter) - Go driver connection pool cleared
  - `mongobetween.pool_event.connection_pool_closed` (Counter) - Go driver connection pool closed
+
+### Testing
+
+- `make test` (alias for `make test-docker`) runs the full suite in a docker harness with a replica set and standalones. It sets `CI=true` and publishes no host ports, so it never touches a MongoDB on host port 27017.
+- `make test-unit` runs on the host; tests that need a database are skipped.
+- `make test-docker-down` removes the harness volumes. Run it once after upgrading from an older checkout that used `mongo:5.0` volumes.
+- `make php-smoke` runs a PHP ext-mongodb 2.3.3 smoke test (9 checks, including TLS and authentication) through the proxy.
+- `make lint` runs golangci-lint.
 
 ### Background
 `mongobetween` was built to address a connection storm issue between a high scale Rails app and MongoDB (see [blog post](https://blog.coinbase.com/scaling-connections-with-ruby-and-mongodb-99204dbf8857)). Due to Ruby MRI's global interpreter lock, multi-threaded web applications don't utilize multiple CPU cores. To achieve better CPU utilization, Puma is run with multiple workers (processes), each of which need a separate MongoDB connection pool. This leads to a large number of connections to MongoDB, sometimes exceeding MongoDB's upstream connection limit of 128k connections.

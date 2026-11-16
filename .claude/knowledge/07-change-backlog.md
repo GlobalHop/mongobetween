@@ -1,43 +1,55 @@
-# 07 — Candidate changes for our use (not started)
+# 07 — Change backlog (status after the `feature/rs-connection-pool` work)
 
-Ranked by importance for **PHP + unsharded Atlas replica set**. Nothing here is implemented yet.
+Originally ranked by importance for **PHP + unsharded Atlas replica set**. Status below reflects the commits in
+`c9f11cd..HEAD` on `feature/rs-connection-pool`. The original descriptions are kept as pre-change notes.
 
 ## Must-have
 
-1. **Configurable / modern wire version in the fake reply** (`mongo/ismaster.go:45,60`).
-   - Expose min/max wire as flags (upstream #28), or mirror the real primary's `maxWireVersion` from
-     `topology.Description()`.
-   - Prerequisite: re-check that the proxy handles everything the client will then use. Claiming ≥ 9 enables new
-     command fields, and ≥ 17 enables more, but these are just OP_MSG fields forwarded as-is. Keep `helloOk`,
-     `topologyVersion` and `compression` absent.
-   - Without this, the next libmongoc minor release (min wire 9) breaks every PHP connection.
-2. **Intercept `hello`** in OP_QUERY and OP_MSG (`command.go:78-92`, `operations.go:210-215, 260-265`), and
-   **reply in the same opcode** as the request (an OP_MSG reply for OP_MSG; `ismaster.go:21`). Add `isWritablePrimary`
-   when answering `hello`. This makes `serverApi` and app-issued handshakes safe.
-3. **Return MongoDB error replies instead of closing the socket** on proxy-side failures (selection timeout,
-   pool cleared, server closed). Use a code the driver treats as retryable, e.g. 11602 or 91, plus the
-   `RetryableWriteError` label (`proxy/connection.go:50-63, 161-186`; upstream #16/#22).
-4. **Fix the stale transaction pin:** skip the cache when `IsStartTransaction` is set, and drop the pin on network or
-   NotPrimary errors (`mongo/mongo.go:188-191, 217-225, 239-243`).
-5. **Deadlines:** a per-request context timeout for selection/checkout (`mongo.go:73`), plus an idle/read deadline
-   and a max frame size (for example `maxMessageSizeBytes`) in `proxy/connection.go:136-159`.
+1. **Configurable / modern wire version in the fake reply** (was `mongo/ismaster.go:45,60`). **Done.** The reply
+   mirrors the upstream `maxWireVersion`; `-max-wire-version` overrides it (0 = mirror, capped at 25 for driver
+   v1.17.10). `helloOk`, `topologyVersion`, `compression`, `setName`, `hosts` and `speculativeAuthenticate` stay
+   absent. `2473379`, `3e3ea57` (driver upgrade).
+2. **Intercept `hello`** and reply in the request's opcode. **Done.** `2473379`.
+3. **Error replies instead of closing the socket.** **Done.** Code 11602 plus `RetryableWriteError` /
+   `TransientTransactionError` / `UnknownTransactionCommitResult` labels; code 13 for disabled writes;
+   `-checkout-timeout` (10s). `eb35d7b`.
+4. **Stale transaction pin.** **Done.** `c37b237`.
+5. **Deadlines and frame limits.** **Partial.** Checkout deadline (`eb35d7b`) and frame size limits
+   (16 B .. 48 MB + 16 KiB) with exhaust stripped (`b22b29d`) are done. An idle/read deadline on client
+   sockets is **not** implemented.
 
 ## Should-have
 
-6. **Read preference support** for secondary offload: parse `$readPreference` (mode, tags, maxStalenessSeconds) from
-   the OP_MSG and build a `ReadPrefSelector`; keep txn > cursor > readPref > primary. Force the primary for writes and
-   for `$out`/`$merge`. Reference: upstream PR #92 and the jitsucom fork.
-7. **Fix cursor cache keys** for db-level cursors (`$cmd.aggregate`, `$cmd.listCollections`, `$cmd.listIndexes.<coll>`)
-   and remove entries on `killCursors` (`command.go`, `cursor_cache.go`).
-8. **Graceful shutdown timeout** and second-SIGTERM handling (`mongobetween.go`, `proxy/proxy.go:132-137`). This is
-   important with PHP persistent connections.
-9. **Cluster tag on upstream metrics** (`config.go:84`).
+6. **Read preference support.** **Done.** Mode, tags and `maxStalenessSeconds` are honoured; default primary.
+   Analytics nodes are reachable via tags. `7272f94`, `f5b41b9`. (A `$readPreference` on a write command is
+   routed by it, like a direct replica-set connection; this is a known limitation.)
+7. **Cursor cache keys and `killCursors` eviction.** **Done.** Pins keyed by full namespace. `6f0b37d`,
+   `930de3a`, `61e4e29`.
+8. **Graceful shutdown timeout and second signal.** **Done.** `-shutdown-timeout` (30s), second signal kills.
+   `d3ccb8b`.
+9. **Cluster tag on upstream metrics.** **Done.** `b883655`.
 
 ## Nice-to-have / hygiene
 
-10. Optional inbound auth or bind-address hardening (the jitsucom fork has `-proxy-auth`).
-11. Fix the `localTime` BSON type, the OP_UPDATE/OP_DELETE ZERO field bugs and the incomplete `IsWrite` list.
-12. Go driver upgrade. v2 changes internals and would break the `unsafe` `extractTopology`. Go ≥ 1.22, `Dockerfile` to
-    match `go.mod`, non-root image, `/tmp` for `-dynamic`, drop or upgrade go-getter.
-13. **Test infrastructure:** add a `--replSet` single-node or 3-node replica set to `docker-compose.yml` and CI, test the
-    sharded persona, and add a PHP/libmongoc smoke test container.
+10. **Inbound auth / hardening.** **Done** beyond the original ask: optional listener TLS and mTLS
+    (`-tls-cert-file`, `-tls-key-file`, `-tls-ca-file`; `9e52db1`), SCRAM-SHA-256 proxy-only users via
+    `-auth-users-file` (`3218ca2`, hardening `0126dbf`, raw 28-byte salt fix `9c23f88`), and
+    `-require-upstream-tls` (`d3ccb8b`).
+11. **`localTime` type, OP_UPDATE/OP_DELETE ZERO bugs, `IsWrite` completeness.** **Not done** (out of scope).
+12. **Go driver upgrade and hygiene.** **Partial.** Upgraded to v1.17.10, `go 1.22`, distroless image
+    (`3e3ea57`), golangci-lint v2 (`f527cfa`), and the dynamic-config poller is stoppable and race-free
+    (`3576989`, `8dc05f8`). **Not done:** driver v2 migration and replacing go-getter.
+13. **Test infrastructure.** **Done.** Docker harness with a 3-member replica set and standalones
+    (`e17c732`, `c31441b`), replica-set integration tests for failover, read preference and cursors
+    (`b76d1c5`, `cd3f860`), PHP ext-mongodb smoke test (`54f78de`). The sharded persona is still untested.
+
+## Still open
+
+- Go driver v2 migration.
+- `speculativeAuthenticate` support (one fewer round trip per new client connection).
+- Idle/read deadline on client sockets.
+- `IsWrite` completeness for `DisableWrites`, legacy OP_UPDATE/OP_DELETE bugs, go-getter replacement.
+- Exhaust cursors and `OP_COMPRESSED` (deliberately unsupported).
+- Inbound auth mechanisms other than SCRAM-SHA-256; per-user privileges.
+
+See [../../docs/atlas-poc.md](../../docs/atlas-poc.md) for the runbook.

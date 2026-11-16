@@ -1,5 +1,8 @@
 # 05 — Sharded vs unsharded: what is essential
 
+> Updated after `feature/rs-connection-pool`. Sections marked *(pre-change)* describe the code before those
+> changes and are kept for history. The PHP rules table reflects the current behaviour.
+
 ## Mental model
 
 mongobetween always tells the app "I am a mongos". Whether that lie holds depends on what sits upstream:
@@ -7,7 +10,7 @@ mongobetween always tells the app "I am a mongos". Whether that lie holds depend
 | Upstream (Go driver topology kind) | Persona shown to the app | Who routes reads/writes |
 |---|---|---|
 | Sharded (mongos list) | mongos (`isdbgrid`) | mongobetween picks any mongos; **mongos** honours `$readPreference` |
-| ReplicaSetWithPrimary / NoPrimary (e.g. Atlas `mongodb+srv` replica set) | mongos (`isdbgrid`) | mongobetween picks **the primary, always** |
+| ReplicaSetWithPrimary / NoPrimary (e.g. Atlas `mongodb+srv` replica set) | mongos (`isdbgrid`) | mongobetween honours the client `$readPreference` (primary by default; *pre-change: always the primary*) |
 | Single (`directConnection=true` / standalone) | standalone (no `msg`) | that one node; the app disables transactions and retryable writes |
 | LoadBalanced | mongos (`isdbgrid`) | untested; no `serviceId`, cursor pinning issues (#69/#70) |
 
@@ -23,7 +26,7 @@ mongobetween always tells the app "I am a mongos". Whether that lie holds depend
    (cursors live on one mongos). For a replica set it only matters across a failover.
 6. **SDAM error feeding** (`processError`), so failovers are detected quickly.
 
-## Additional essentials for an unsharded replica set
+## Additional essentials for an unsharded replica set *(pre-change; items 2, 3, 4 and 5 are now addressed, see 07)*
 
 1. **The upstream URI must yield a replica-set topology.** Use `mongodb+srv://…` or `replicaSet=` and never
    `directConnection=true`. Otherwise the persona becomes standalone and transactions stop working.
@@ -37,26 +40,27 @@ mongobetween always tells the app "I am a mongos". Whether that lie holds depend
    deadline, so slow queries cause head-of-line blocking. Size `maxPoolSize`/`minPoolSize`/`waitQueueTimeoutMS`
    deliberately. Atlas load ≈ pods × pool size.
 
-## PHP / libmongoc client rules (required with the current code)
+## PHP / libmongoc client rules (current behaviour)
 
-App URI to the proxy: `mongodb://127.0.0.1:<port>/?<only harmless options>` or `mongodb://%2Fpath%2Fto.sock`.
+App URI to the proxy: `mongodb://<proxy-host>:<port>/?<options below>` or `mongodb://%2Fpath%2Fto.sock`.
+Full runbook: `docs/atlas-poc.md`.
 
 | Option in app URI / driver options | Effect via the proxy | Rule |
 |---|---|---|
 | `mongodb+srv://` | Needs SRV DNS for the proxy; implies TLS | **Don't** |
-| `tls=true` / `ssl=true` | Listener has no TLS; the connection hangs | **Don't** |
-| user:password, `authSource`, `authMechanism` | SASL split across pooled connections → "Authentication failed" | **Don't**. Credentials go on the proxy's upstream side |
+| `tls=true` / `ssl=true` | Works only if the proxy runs with `-tls-cert-file`/`-tls-key-file` (add `tlsCAFile` for a private CA; `tlsCertificateKeyFile` if `-tls-ca-file` mTLS) | Allowed with listener TLS, otherwise **Don't** |
+| user:password, `authSource`, `authMechanism` | Proxy-side SCRAM-SHA-256 with `-auth-users-file` users (never the Atlas user) | Allowed with `-auth-users-file`; omit otherwise |
 | `replicaSet=…` | libmongoc removes a MONGOS from a replica-set topology → "No suitable servers found" | **Don't** |
-| `serverApi` (Stable API; often in Atlas snippets) | Driver sends OP_MSG `hello`, which is forwarded → real replica-set reply or error 186 "client metadata … may only be sent in the first hello" | **Don't** |
-| `loadBalanced=true` | Same `hello` path; also needs `serviceId` | **Don't** |
+| `serverApi` (Stable API) | `hello` is now intercepted and answered locally | Allowed |
+| `loadBalanced=true` | Needs `serviceId`; untested | **Don't** |
 | `directConnection=true` (app side) | OK-ish, but pointless | Avoid |
-| `readPreference=secondary*` | Silently served by the primary | Works, no effect |
+| `readPreference=secondary*` (+ tags, maxStalenessSeconds) | Honoured by the proxy | Works (pre-change: silently served by the primary) |
 | `compressors=` | Never negotiated | No effect |
-| exhaust cursors | Corrupts pooled upstream connections | **Don't** |
-| App code `executeCommand('admin', ['isMaster'=>1])` | OP_MSG request gets an OP_REPLY reply | Use `ping` |
-| Features needing wire > 8 (delete `hint`, snapshot reads, `Client::bulkWrite`, QE, `let`) | Refused client-side | Avoid until `maxWireVersion` is raised |
+| exhaust cursors | `exhaustAllowed` is stripped | Not supported |
+| App code `executeCommand('admin', ['isMaster'=>1])` | Reply is in the request's opcode | Works |
+| Features needing wire > 8 | `maxWireVersion` now mirrors upstream | Available (verify with the PHP smoke test) |
 
-## Most probable causes of our earlier failure (ranked)
+## Most probable causes of our earlier failure (ranked) *(pre-change)*
 
 1. The app URI was copied from Atlas (`mongodb+srv`, TLS, credentials, `replicaSet`, or `serverApi`). Each of these
    alone breaks the connection. This matches upstream #30, the only Atlas replica-set report, which was never resolved.
@@ -64,7 +68,7 @@ App URI to the proxy: `mongodb://127.0.0.1:<port>/?<only harmless options>` or `
 3. Failover behaviour: socket closed instead of an error reply, plus selection blocking during elections (#16).
 4. Expectations around reading from secondaries (all reads go to the primary).
 
-## Verify in a proof of concept (not verifiable from code alone)
+## Verify in a proof of concept *(pre-change list; the docker harness and `make php-smoke` now cover the libmongoc and failover items, Atlas itself remains to be verified)*
 
 - Whether libmongoc accepts an OP_REPLY to an OP_MSG isMaster.
 - Exact ext-mongodb ↔ libmongoc version and its `WIRE_VERSION_MIN` for our PHP image.

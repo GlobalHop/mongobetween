@@ -5,7 +5,10 @@ mongo-go-driver v1.14.0 internals it uses, the libmongoc source, and the upstrea
 Goal: understand how the proxy works before adapting it to our setup. Our setup is a PHP app
 (ext-mongodb / libmongoc) in front of an **unsharded Atlas replica set**.
 
-No code was changed while collecting this.
+No code was changed while collecting this. **Update:** the changes listed in `07-change-backlog.md` have since
+been implemented on `feature/rs-connection-pool`. Documents 01-06 describe the code **as it was before those
+changes** (master `ea5a87e`) unless marked otherwise; `05` and `07` have been updated, and the runbook is in
+`docs/atlas-poc.md`.
 
 ## Files
 
@@ -21,19 +24,22 @@ No code was changed while collecting this.
 
 ## TL;DR
 
-- mongobetween is a **mongos impersonator**. It answers the app's `isMaster` locally with
-  `msg: "isdbgrid"` and forwards every other wire message **byte-for-byte** through a Go driver
-  connection pool. It checks out one upstream connection per message.
-- The app driver therefore never sees the real cluster hosts. It treats the proxy as a single
-  always-available mongos. All SDAM, failover and TLS/auth to Atlas happen inside the Go driver.
-- **The proxy has three hard assumptions:**
-  1. Reads/writes may go to any server (true for mongos). Selection is hard-coded to `Primary`, and on a
-     replica set that means *everything goes to the primary*. Client `$readPreference` is ignored.
-  2. The client handshake uses legacy `isMaster`. `hello` is not intercepted.
-  3. MongoDB is 4.2. `maxWireVersion: 8` is hard-coded.
-- **It can work on an unsharded replica set** if the PHP URI is plain
-  `mongodb://<proxy>:<port>` (or a unix socket) with no `replicaSet`, no `tls`, no credentials, no
-  `serverApi`, no `loadBalanced` and no `directConnection`. The upstream URI holds the Atlas `mongodb+srv` +
-  credentials, and its topology must stay replica-set (not direct).
-- **Biggest future blocker:** libmongoc is about to raise its minimum wire version to 9 (4.4). The proxy reports
-  max 8, so every PHP connection will then be refused. The hard-coded handshake reply must change.
+Current state (after `feature/rs-connection-pool`):
+
+- mongobetween is a **mongos impersonator**. It answers the app's `hello`/`isMaster` locally in the request's
+  opcode with `msg: "isdbgrid"`, mirroring the upstream `maxWireVersion` (override with `-max-wire-version`), and
+  forwards every other wire message **byte-for-byte** through a Go driver connection pool, one checkout per
+  message.
+- The app driver never sees the real cluster hosts. SDAM, failover and TLS/auth to Atlas happen inside the Go
+  driver (v1.17.10).
+- Client `$readPreference` (mode, tags, maxStalenessSeconds) is honoured; the default is primary.
+- Proxy-side failures become MongoDB error replies (11602 with retryable labels) instead of closed sockets.
+- Optional inbound TLS/mTLS and SCRAM-SHA-256 proxy-only users (`-auth-users-file`); `-require-upstream-tls`.
+- It works on an unsharded replica set with a plain `mongodb://<proxy>:<port>` PHP URI (no `mongodb+srv`,
+  `replicaSet`, `loadBalanced`). See `05` for the URI rules and `docs/atlas-poc.md` for the runbook.
+- Limits: inbound SCRAM-SHA-256 only, all proxy users share the Atlas user's privileges, no exhaust cursors, no
+  OP_COMPRESSED, no `speculativeAuthenticate`, Go driver v1.
+
+Pre-change TL;DR (historical, master `ea5a87e`): selection was hard-coded to `Primary` and `$readPreference` was
+ignored; `hello` was not intercepted; `maxWireVersion: 8` was hard-coded, which would have broken PHP once
+libmongoc raised its minimum wire version to 9.
