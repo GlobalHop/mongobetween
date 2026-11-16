@@ -35,6 +35,7 @@ type Config struct {
 	ping            bool
 	checkoutTimeout time.Duration
 	maxWireVersion  int32
+	shutdownTimeout time.Duration
 	pretty          bool
 	clients         []client
 	level           zapcore.Level
@@ -42,6 +43,7 @@ type Config struct {
 	statsdaddr      string
 	logger          *zap.Logger
 	statsd          *statsd.Client
+	mongos          []*mongo.Mongo
 }
 
 type client struct {
@@ -76,6 +78,18 @@ func (c *Config) Statsd() *statsd.Client {
 	return c.statsd
 }
 
+// ShutdownTimeout is how long a proxy waits for client connections to close before force closing them.
+func (c *Config) ShutdownTimeout() time.Duration {
+	return c.shutdownTimeout
+}
+
+// CloseUpstreams closes every upstream driver client created by Proxies.
+func (c *Config) CloseUpstreams() {
+	for _, m := range c.mongos {
+		m.Close()
+	}
+}
+
 func (c *Config) Proxies(log *zap.Logger) (proxies []*proxy.Proxy, err error) {
 	d, err := proxy.NewDynamic(c.dynamic, log)
 	if err != nil {
@@ -89,6 +103,7 @@ func (c *Config) Proxies(log *zap.Logger) (proxies []*proxy.Proxy, err error) {
 			return nil, err
 		}
 		mongos[client.address] = m
+		c.mongos = append(c.mongos, m)
 	}
 	mongoLookup := func(address string) *mongo.Mongo {
 		return mongos[address]
@@ -121,6 +136,8 @@ func parseFlags() (*Config, error) {
 
 	var maxWireVersion int
 	var checkoutTimeout time.Duration
+	var shutdownTimeout time.Duration
+	var requireUpstreamTLS bool
 	var unlink, ping, pretty, enableSdamMetrics, enableSdamLogging bool
 	var network, username, password, stats, loglevel, dynamic string
 	flag.StringVar(&network, "network", "tcp4", "One of: tcp, tcp4, tcp6, unix or unixpacket")
@@ -130,6 +147,8 @@ func parseFlags() (*Config, error) {
 	flag.BoolVar(&unlink, "unlink", false, "Unlink existing unix sockets before listening")
 	flag.IntVar(&maxWireVersion, "max-wire-version", 0, "maxWireVersion reported to clients in handshake replies (0 = mirror upstream)")
 	flag.DurationVar(&checkoutTimeout, "checkout-timeout", 10*time.Second, "Maximum time to wait for an upstream connection checkout (0 = unbounded)")
+	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", 30*time.Second, "Maximum time to wait for client connections to close on shutdown before force closing them")
+	flag.BoolVar(&requireUpstreamTLS, "require-upstream-tls", false, "Refuse to start unless every upstream cluster is configured with TLS")
 	flag.BoolVar(&ping, "ping", false, "Ping downstream MongoDB before listening")
 	flag.BoolVar(&pretty, "pretty", false, "Pretty print logging")
 	flag.StringVar(&loglevel, "loglevel", "info", "One of: debug, info, warn, error, dpanic, panic, fatal")
@@ -200,12 +219,19 @@ func parseFlags() (*Config, error) {
 		})
 	}
 
+	if requireUpstreamTLS {
+		if err := validateUpstreamTLS(clients); err != nil {
+			return nil, err
+		}
+	}
+
 	return &Config{
 		network:         network,
 		unlink:          unlink,
 		ping:            ping,
 		checkoutTimeout: checkoutTimeout,
 		maxWireVersion:  int32(maxWireVersion),
+		shutdownTimeout: shutdownTimeout,
 		pretty:          pretty,
 		statsdaddr:      stats,
 		clients:         clients,
@@ -214,6 +240,17 @@ func parseFlags() (*Config, error) {
 		logger:          loggerClient,
 		statsd:          statsdClient,
 	}, nil
+}
+
+// validateUpstreamTLS errors if any upstream client has no TLS configuration. The error names only the listen
+// address, never the URI, which may carry credentials.
+func validateUpstreamTLS(clients []client) error {
+	for _, c := range clients {
+		if c.opts == nil || c.opts.TLSConfig == nil {
+			return fmt.Errorf("upstream TLS required but disabled for %s", c.address)
+		}
+	}
+	return nil
 }
 
 func expandEnv(config string) string {

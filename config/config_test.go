@@ -1,9 +1,11 @@
 package config
 
 import (
+	"crypto/tls"
 	"flag"
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/stretchr/testify/assert"
+	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap/zapcore"
 	"os"
 	"testing"
@@ -160,4 +162,32 @@ func TestMissingAddresses(t *testing.T) {
 	resetFlags()
 	_, err := parseFlags()
 	assert.EqualError(t, err, "missing address=uri(s)")
+}
+
+func TestValidateUpstreamTLS(t *testing.T) {
+	plain, err := clientOptionsFor("mongodb://h:27017")
+	assert.Nil(t, err)
+	err = validateUpstreamTLS([]client{{address: ":27030", opts: plain}})
+	if assert.Error(t, err) {
+		assert.Equal(t, "upstream TLS required but disabled for :27030", err.Error())
+	}
+
+	withTLS, err := clientOptionsFor("mongodb://h:27017/?tls=true")
+	assert.Nil(t, err)
+	assert.Nil(t, validateUpstreamTLS([]client{{address: ":27030", opts: withTLS}}))
+
+	// mongodb+srv cannot be resolved offline: build the options as the driver would after parsing
+	srv := options.Client().SetTLSConfig(&tls.Config{MinVersion: tls.VersionTLS12})
+	assert.Nil(t, validateUpstreamTLS([]client{{address: ":27030", opts: srv}}))
+
+	// one plain client among TLS clients fails
+	err = validateUpstreamTLS([]client{{address: ":1", opts: withTLS}, {address: ":2", opts: plain}})
+	if assert.Error(t, err) {
+		assert.Contains(t, err.Error(), ":2")
+	}
+}
+
+func clientOptionsFor(uri string) (*options.ClientOptions, error) {
+	_, opts, err := clientOptions(uri, "", "")
+	return opts, err
 }

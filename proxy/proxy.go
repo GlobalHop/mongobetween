@@ -33,6 +33,9 @@ type Proxy struct {
 
 	quit chan interface{}
 	kill chan interface{}
+
+	drained     chan interface{}
+	drainedOnce sync.Once
 }
 
 func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string, unlink bool, mongoLookup MongoLookup, dynamic *Dynamic) (*Proxy, error) {
@@ -58,6 +61,8 @@ func NewProxy(log *zap.Logger, sd *statsd.Client, label, network, address string
 
 		quit: make(chan interface{}),
 		kill: make(chan interface{}),
+
+		drained: make(chan interface{}),
 	}, nil
 }
 
@@ -70,6 +75,22 @@ func (p *Proxy) Shutdown() {
 		_ = recover() // "close of closed channel" panic if Shutdown() was already called
 	}()
 	close(p.quit)
+}
+
+// ShutdownWithTimeout stops accepting connections, waits up to d for open client connections to close, then
+// force closes whatever remains via Kill().
+func (p *Proxy) ShutdownWithTimeout(d time.Duration) {
+	p.Shutdown()
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-p.drained:
+	case <-timer.C:
+		p.log.Warn("Shutdown timeout reached, closing remaining connections", zap.Duration("timeout", d))
+		p.Kill()
+	}
 }
 
 func (p *Proxy) Kill() {
@@ -134,6 +155,7 @@ func (p *Proxy) accept(l net.Listener) {
 	defer func() {
 		p.log.Info("Waiting for open connections")
 		wg.Wait()
+		p.drainedOnce.Do(func() { close(p.drained) })
 	}()
 
 	opened, closed := util.StatsdBackgroundGauge(p.statsd, "open_connections", []string{})

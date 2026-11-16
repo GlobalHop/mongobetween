@@ -29,6 +29,7 @@ func run(config *config.Config) {
 	var wg sync.WaitGroup
 	defer func() {
 		wg.Wait()
+		config.CloseUpstreams()
 	}()
 
 	for _, p := range proxies {
@@ -45,7 +46,7 @@ func run(config *config.Config) {
 
 	shutdown := func() {
 		for _, p := range proxies {
-			p.Shutdown()
+			go p.ShutdownWithTimeout(config.ShutdownTimeout())
 		}
 	}
 	kill := func() {
@@ -77,7 +78,7 @@ func shutdownOnSignal(log *zap.Logger, shutdownFunc func(), killFunc func()) {
 						fmt.Println("Ctrl-C again to kill incoming connections")
 					})
 				}
-			} else if sig == os.Interrupt {
+			} else {
 				log.Warn("Terminating")
 				_ = log.Sync() // #nosec
 				killFunc()

@@ -433,3 +433,52 @@ func TestUpstreamCursorNamespaces(t *testing.T) {
 		})
 	}
 }
+
+func TestProxyShutdownWithTimeoutClosesIdleClients(t *testing.T) {
+	const port = 27027
+	sd, err := statsd.New("localhost:8125")
+	assert.Nil(t, err)
+	dynamic, err := NewDynamic("", zap.L())
+	assert.Nil(t, err)
+
+	uri := "mongodb://localhost:27017/test"
+	if os.Getenv("CI") == "true" {
+		uri = "mongodb://mongo1:27017/test"
+	}
+	upstream, err := mongob.Connect(zap.L(), sd, options.Client().ApplyURI(uri), mongob.Settings{})
+	assert.Nil(t, err)
+	defer upstream.Close()
+
+	address := fmt.Sprintf(":%d", port)
+	proxy, err := NewProxy(zap.L(), sd, "label", "tcp4", address, false,
+		func(string) *mongob.Mongo { return upstream }, dynamic)
+	assert.Nil(t, err)
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- proxy.Run() }()
+
+	// The client keeps an idle connection open (minPoolSize=1), so accept() would wait forever.
+	client := setupClient(t, "localhost", port, options.Client().SetMinPoolSize(1))
+	defer func() { _ = client.Disconnect(ctx) }()
+
+	start := time.Now()
+	returned := make(chan struct{})
+	go func() {
+		proxy.ShutdownWithTimeout(500 * time.Millisecond)
+		close(returned)
+	}()
+
+	select {
+	case <-returned:
+		assert.True(t, time.Since(start) < 2*time.Second)
+	case <-time.After(2 * time.Second):
+		t.Fatal("ShutdownWithTimeout did not return within 2s")
+	}
+
+	select {
+	case err := <-runDone:
+		assert.Nil(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after ShutdownWithTimeout")
+	}
+}
