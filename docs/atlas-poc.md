@@ -169,6 +169,8 @@ Metrics (all prefixed `mongobetween.`; the cluster `label` is added as a tag whe
   network problem. Rising timings show selection waiting.
 - `handle_message` (timing, tagged `success:true|false`). Failures here are requests the proxy could not
   complete; a few during a failover are expected, a steady stream is not.
+- With `-auth-users-file`, `handle_message` for requests sent before authentication is tagged
+  `command:unauthenticated` and carries no `collection` tag, so unauthenticated clients cannot create tag values.
 - `pool_event.connection_check_out_failed` and `pool_event.connection_pool_cleared` rising during a failover is
   normal; outside a failover it indicates trouble.
 - `open_connections` (client side), `cursors` and `transactions` gauges show pinned state in memory.

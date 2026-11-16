@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bytes"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -10,6 +11,9 @@ import (
 
 	"github.com/DataDog/datadog-go/statsd"
 	"github.com/stretchr/testify/assert"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
+	"go.mongodb.org/mongo-driver/x/mongo/driver/wiremessage"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -127,5 +131,61 @@ func TestProxyMaxConnections(t *testing.T) {
 	rejected := metricLines(metrics(), "connection_rejected:")
 	if assert.Len(t, rejected, 1) {
 		assert.Contains(t, rejected[0], "reason:max_connections")
+	}
+}
+
+func opMsgBytes(t *testing.T, doc bson.D) []byte {
+	t.Helper()
+	raw, err := bson.Marshal(doc)
+	assert.NoError(t, err)
+	idx, wm := wiremessage.AppendHeaderStart(nil, 1, 0, wiremessage.OpMsg)
+	wm = wiremessage.AppendMsgFlags(wm, 0)
+	wm = wiremessage.AppendMsgSectionType(wm, wiremessage.SingleDocument)
+	wm = append(wm, raw...)
+	return bsoncore.UpdateLength(wm, idx, int32(len(wm[idx:])))
+}
+
+// handleOne sends wm to a connection configured by c, lets it handle one message, drains any reply, and returns
+// the handle_message metric lines.
+func handleOne(t *testing.T, c *connection, wm []byte) []string {
+	t.Helper()
+	sd, metrics := capturingStatsd(t)
+	client, server := net.Pipe()
+	defer func() { _ = client.Close() }()
+	dynamic, err := NewDynamic("", zap.NewNop())
+	assert.NoError(t, err)
+	c.log, c.statsd, c.conn, c.dynamic = zap.NewNop(), sd, server, dynamic
+	c.mongoLookup = func(string) *mongob.Mongo { return nil }
+
+	go func() {
+		_, _ = client.Write(wm)
+		_, _ = io.Copy(io.Discard, client)
+	}()
+	_ = c.handleMessage()
+	_ = server.Close()
+	return metricLines(metrics(), "handle_message:")
+}
+
+func TestStatsdTagsBeforeAuthentication(t *testing.T) {
+	u := loadTestUsers(t)
+	find := opMsgBytes(t, bson.D{{Key: "find", Value: "secret_coll"}, {Key: "$db", Value: "test"}})
+
+	lines := handleOne(t, &connection{users: u}, find)
+	if assert.Len(t, lines, 1) {
+		assert.Contains(t, lines[0], "command:unauthenticated")
+		assert.NotContains(t, lines[0], "collection:")
+		assert.NotContains(t, lines[0], "secret_coll")
+		assert.NotContains(t, lines[0], "command:find")
+	}
+
+	for name, c := range map[string]*connection{
+		"authenticated": {users: u, auth: authSession{authenticated: true, user: "app"}},
+		"auth off":      {},
+	} {
+		lines := handleOne(t, c, find)
+		if assert.Len(t, lines, 1, name) {
+			assert.Contains(t, lines[0], "command:find", name)
+			assert.Contains(t, lines[0], "collection:secret_coll", name)
+		}
 	}
 }

@@ -130,10 +130,14 @@ func (c *connection) handleMessage() (err error) {
 		tags,
 		fmt.Sprintf("request_op_code:%v", op.OpCode()),
 		fmt.Sprintf("is_master:%v", isMaster),
-		fmt.Sprintf("command:%s", string(command)),
-		fmt.Sprintf("collection:%s", collection),
-		fmt.Sprintf("unacknowledged:%v", unacknowledged),
 	)
+	if c.unauthenticated() {
+		// client-chosen names must not create statsd tag values before the client has authenticated
+		tags = append(tags, "command:unauthenticated")
+	} else {
+		tags = append(tags, fmt.Sprintf("command:%s", string(command)), fmt.Sprintf("collection:%s", collection))
+	}
+	tags = append(tags, fmt.Sprintf("unacknowledged:%v", unacknowledged))
 	c.log.Debug(
 		"Request",
 		zap.Int32("op_code", int32(op.OpCode())),
