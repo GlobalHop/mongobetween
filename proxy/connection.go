@@ -1,6 +1,9 @@
 package proxy
 
 import (
+	"bytes"
+	"crypto/tls"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +19,8 @@ import (
 
 var errClientNotFound = errors.New("mongo client not found for address")
 
+var errTLSOnPlainPort = errors.New("TLS client on plain-text port")
+
 type connection struct {
 	log    *zap.Logger
 	statsd *statsd.Client
@@ -23,7 +28,10 @@ type connection struct {
 	address string
 	conn    net.Conn
 	kill    chan interface{}
-	buffer  []byte
+	buffer  bytes.Buffer
+
+	// readFirstFrame is set once the first frame of the connection has started arriving.
+	readFirstFrame bool
 
 	mongoLookup MongoLookup
 	dynamic     *Dynamic
@@ -59,6 +67,10 @@ func (c *connection) processMessages() {
 	for {
 		err := c.handleMessage()
 		if err != nil {
+			if errors.Is(err, errTLSOnPlainPort) {
+				c.log.Warn("TLS client on plain-text port")
+				return
+			}
 			if err != io.EOF {
 				select {
 				case <-c.kill:
@@ -173,32 +185,68 @@ func (c *connection) replyWithError(op mongo.Operation, cause error, unacknowled
 	return err
 }
 
-func (c *connection) readWireMessage() ([]byte, error) {
-	var sizeBuf [4]byte
+// headerSize is the size of the standard wire message header (messageLength, requestID, responseTo, opCode).
+const headerSize = 16
 
-	_, err := io.ReadFull(c.conn, sizeBuf[:])
-	if err != nil {
+// readWireMessage reads one wire message. The returned slice aliases the connection buffer and is only valid until
+// the next call. The body is read incrementally, so the buffer grows with the bytes actually received rather than
+// with the size the frame declares.
+func (c *connection) readWireMessage() ([]byte, error) {
+	var header [headerSize]byte
+
+	if _, err := io.ReadFull(c.conn, header[:4]); err != nil {
 		return nil, err
 	}
+	firstFrame := !c.readFirstFrame
+	c.readFirstFrame = true
+	size := int(int32(binary.LittleEndian.Uint32(header[:4])))
+	prefix := header[:4]
 
-	// read the length as an int32
-	size := (int32(sizeBuf[0])) | (int32(sizeBuf[1]) << 8) | (int32(sizeBuf[2]) << 16) | (int32(sizeBuf[3]) << 24)
-	if size < 16 || size > mongo.MaxWireMessageSize {
+	if firstFrame && looksLikeTLSRecord(prefix) && !c.isTLS() {
+		// A TLS ClientHello reads as a plausible 17-34 MB size. Confirm with the rest of the header (a ClientHello is
+		// always longer than 16 bytes, and a message whose size starts with these bytes is at least 790 bytes)
+		// before refusing.
+		if _, err := io.ReadFull(c.conn, header[4:]); err != nil {
+			return nil, err
+		}
+		if looksLikeTLSClientHello(header[:]) {
+			return nil, errTLSOnPlainPort
+		}
+		prefix = header[:]
+	}
+
+	if size < headerSize || size > mongo.MaxWireMessageSize {
 		return nil, fmt.Errorf("invalid message size %d", size)
 	}
-	if int(size) > cap(c.buffer) {
-		c.buffer = make([]byte, 0, size)
-	}
 
-	buffer := c.buffer[:size]
-	copy(buffer, sizeBuf[:])
-
-	_, err = io.ReadFull(c.conn, buffer[4:])
+	c.buffer.Reset()
+	c.buffer.Write(prefix)
+	n, err := io.CopyN(&c.buffer, c.conn, int64(size-len(prefix)))
 	if err != nil {
+		if errors.Is(err, io.EOF) && n > 0 {
+			return nil, io.ErrUnexpectedEOF
+		}
 		return nil, err
 	}
+	return c.buffer.Bytes(), nil
+}
 
-	return buffer, nil
+func (c *connection) isTLS() bool {
+	_, ok := c.conn.(*tls.Conn)
+	return ok
+}
+
+// looksLikeTLSRecord reports whether b starts like a TLS handshake record: content type 0x16 and protocol version
+// 3.0 (SSL 3.0) to 3.4.
+func looksLikeTLSRecord(b []byte) bool {
+	return len(b) >= 3 && b[0] == 0x16 && b[1] == 0x03 && b[2] <= 0x04
+}
+
+// looksLikeTLSClientHello reports whether the 16 bytes in h are a TLS record header followed by a ClientHello
+// (handshake type 1, client version 3.x). For a wire message these bytes are the requestID and responseTo, and a
+// client request always has responseTo 0, so byte 9 can never be 0x03.
+func looksLikeTLSClientHello(h []byte) bool {
+	return len(h) >= 10 && looksLikeTLSRecord(h) && h[5] == 0x01 && h[9] == 0x03
 }
 
 func (c *connection) roundTrip(msg *mongo.Message, isMaster bool, tags []string) (*mongo.Message, error) {

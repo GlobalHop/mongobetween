@@ -70,7 +70,7 @@ URI and driver option rules:
 | Option in the app URI / driver options | Rule |
 |---|---|
 | `mongodb+srv://` | Do not use. The proxy has no SRV record, and SRV implies TLS. Use `mongodb://host:port`. |
-| `tls=true` / `ssl=true` | Allowed only when the proxy runs with `-tls-cert-file` and `-tls-key-file`; pair it with `tlsCAFile` for a private CA. Otherwise the connection hangs. |
+| `tls=true` / `ssl=true` | Allowed only when the proxy runs with `-tls-cert-file` and `-tls-key-file`; pair it with `tlsCAFile` for a private CA. Otherwise the proxy closes the connection at once and logs `TLS client on plain-text port`. |
 | `tlsCertificateKeyFile` | Required only if the proxy runs with `-tls-ca-file` (mutual TLS). |
 | user and password | Allowed, and required when the proxy runs with `-auth-users-file`. These must be the **proxy** users from that file, never the Atlas user. Only `SCRAM-SHA-256` is supported; libmongoc picks it automatically when you do not set `authMechanism`. If auth is not enabled on the proxy, omit credentials. |
 | `authSource`, `authMechanism` | Normally omit. If set, the mechanism must be `SCRAM-SHA-256`. |
@@ -169,7 +169,8 @@ Log lines (JSON, or readable with `-pretty`):
   MongoDB error reply for the client instead of closing the socket.
 - `Error handling message` means a message could not even be answered with an error reply.
 - `Authentication failed` (with the `user`) for rejected proxy logins.
-- `TLS handshake failed` for bad inbound TLS clients.
+- `TLS handshake failed` for bad inbound TLS clients, and `TLS client on plain-text port` for a client that
+  speaks TLS to a listener started without `-tls-cert-file`/`-tls-key-file` (the connection is closed at once).
 - `Shutdown timeout reached, closing remaining connections` and `Force closed connection` during shutdown.
 
 ## 6. Sizing
