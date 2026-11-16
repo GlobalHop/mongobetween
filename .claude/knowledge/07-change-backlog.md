@@ -14,6 +14,9 @@ Originally ranked by importance for **PHP + unsharded Atlas replica set**. Statu
    `TransientTransactionError` / `UnknownTransactionCommitResult` labels (plain requests get `RetryableWriteError`,
    transaction statements `TransientTransactionError`, `commitTransaction` both `RetryableWriteError` and
    `UnknownTransactionCommitResult`); code 13 for disabled writes; code 2 for invalid read preferences;
+   code 133 (FailedToSatisfyReadPreference, no labels) for a non-primary read preference no member can satisfy,
+   failing fast on a stable replica set; client errmsg values are fixed strings, never upstream hostnames/topology
+   (details only in logs);
    `-checkout-timeout` (10s). `eb35d7b`. Every error reply is counted in the `proxy_error_reply` statsd counter
    (tags `code`, `command`; `0e760b7`); error replies are `success:true` in `handle_message`.
 4. **Stale transaction pin.** **Done.** `c37b237`.

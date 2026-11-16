@@ -164,6 +164,21 @@ transaction it carries `RetryableWriteError` (retryable writes retry once); insi
 the election outlasted the timeouts. Confirm in Atlas that a different member is
 now primary and that the loop's last iteration succeeded. Repeat three times.
 
+A read whose read preference no member can satisfy (for example a tag set matching nothing) is not a failover
+symptom. On a stable replica set (a primary, no member of unknown state) the proxy replies at once with code 133
+(FailedToSatisfyReadPreference), as a mongos does, and without retry labels. A non-primary request that hits the
+server selection timeout gets the same reply. Primary requests that hit it get 11602 as described above.
+
+Client-visible `errmsg` values are fixed strings prefixed `mongobetween: ` and never carry upstream hostnames or
+topology text; the full cause is in the "Proxy error reply" log line.
+
+| Code | Name | Labels | errmsg |
+| --- | --- | --- | --- |
+| 11602 | InterruptedDueToReplStateChange | see above | `upstream unavailable (no suitable server; failover in progress?)`, `request cancelled` or `upstream error` |
+| 133 | FailedToSatisfyReadPreference | none | `no upstream server matches the read preference` |
+| 13 | Unauthorized | none | `writes are disabled` |
+| 2 | BadValue | none | `invalid read preference` |
+
 If you see failures, record the error code, the `Proxy error reply` log line and whether the failure happened
 inside or after the election window, and compare `serverSelectionTimeoutMS` and `-checkout-timeout` to the PHP
 request timeout.

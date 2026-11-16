@@ -38,7 +38,7 @@ them. Items already fixed in the final fix wave (`7fa5a71..16c8717`) are listed 
 - Task 3: minor (deferred): empty saslSupportedMechs dropped from fake reply — Task 11 must re-add when auth on
 - Task 4: minor (deferred): checkout timeout path not exercised by any test
 - Task 4: minor (deferred): WriteException branch in proxy test asserts label only, not code 11602
-- Task 4: minor (deferred, security-ish): errmsg forwards err.Error() — server-selection errors leak upstream hostnames to clients; prefer generic msg + log detail
+- Task 4: DONE: errmsg forwarded err.Error() (leaked upstream hostnames); now fixed generic messages, detail stays in logs
 - Task 4: minor (deferred): local HandshakeResponse failures mislabelled as 11602 upstream errors
 - Task 4: minor (deferred): no statsd counter for proxy error replies
 - Task 5: minor (deferred): no test for MoreToCome discard branch (needs fake Expirable conn)
