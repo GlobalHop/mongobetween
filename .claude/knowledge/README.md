@@ -21,6 +21,7 @@ changes** (master `ea5a87e`) unless marked otherwise; `05` and `07` have been up
 | [05-sharded-vs-unsharded.md](05-sharded-vs-unsharded.md) | **Key doc.** What makes each topology work, PHP client rules, the failure modes we likely hit |
 | [06-upstream-history.md](06-upstream-history.md) | Relevant upstream issues/PRs, design history, active forks, alternatives |
 | [07-change-backlog.md](07-change-backlog.md) | Candidate modifications, ranked, with the code locations to touch |
+| [08-open-follow-ups.md](08-open-follow-ups.md) | Deferred minor findings and parked items after the branch work |
 
 ## TL;DR
 
