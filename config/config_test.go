@@ -305,3 +305,22 @@ func TestMaxConnectionsFlag(t *testing.T) {
 	_, err = parseFlags()
 	assert.EqualError(t, err, "-max-connections must not be negative")
 }
+
+func TestMaxWireVersionRange(t *testing.T) {
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	uri := "/tmp/mongo1.sock=mongodb://localhost:27127/database"
+
+	for _, ok := range []string{"0", "17", "25"} {
+		os.Args = []string{"mongobetween", "-max-wire-version", ok, uri}
+		resetFlags()
+		_, err := parseFlags()
+		assert.Nil(t, err, ok)
+	}
+	for _, bad := range []string{"-1", "26", "99"} {
+		os.Args = []string{"mongobetween", "-max-wire-version", bad, uri}
+		resetFlags()
+		_, err := parseFlags()
+		assert.EqualError(t, err, "-max-wire-version must be between 0 and 25", bad)
+	}
+}

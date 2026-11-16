@@ -6,12 +6,14 @@ Originally ranked by importance for **PHP + unsharded Atlas replica set**. Statu
 ## Must-have
 
 1. **Configurable / modern wire version in the fake reply** (was `mongo/ismaster.go:45,60`). **Done.** The reply
-   mirrors the upstream `maxWireVersion`; `-max-wire-version` overrides it (0 = mirror, capped at 25 for driver
-   v1.17.10). `helloOk`, `topologyVersion`, `compression`, `setName`, `hosts` and `speculativeAuthenticate` stay
-   absent. `2473379`, `3e3ea57` (driver upgrade).
+   mirrors the upstream `maxWireVersion`; `-max-wire-version` overrides it (0 = mirror, the mirrored value capped
+   at 25 for driver v1.17.10; an explicit value must be 0..25 and is sent as given). `helloOk`, `topologyVersion`,
+   `compression`, `setName`, `hosts` and `speculativeAuthenticate` stay absent. `2473379`, `3e3ea57` (driver upgrade).
 2. **Intercept `hello`** and reply in the request's opcode. **Done.** `2473379`.
 3. **Error replies instead of closing the socket.** **Done.** Code 11602 plus `RetryableWriteError` /
-   `TransientTransactionError` / `UnknownTransactionCommitResult` labels; code 13 for disabled writes;
+   `TransientTransactionError` / `UnknownTransactionCommitResult` labels (plain requests get `RetryableWriteError`,
+   transaction statements `TransientTransactionError`, `commitTransaction` both `RetryableWriteError` and
+   `UnknownTransactionCommitResult`); code 13 for disabled writes; code 2 for invalid read preferences;
    `-checkout-timeout` (10s). `eb35d7b`.
 4. **Stale transaction pin.** **Done.** `c37b237`.
 5. **Deadlines and frame limits.** **Partial.** Checkout deadline (`eb35d7b`) and frame size limits

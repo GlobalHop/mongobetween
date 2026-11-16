@@ -41,8 +41,9 @@ Other relevant flags (verified with `mongobetween -h`):
 - `-checkout-timeout` (default `10s`) bounds how long a request waits for an upstream connection. On expiry the
   client receives an error reply (see section 5) rather than a closed socket.
 - `-max-wire-version` (default `0`) controls the `maxWireVersion` in the handshake reply. `0` mirrors the real
-  upstream value, which is what you want. The value is capped at 25 because the bundled Go driver (v1.17.10)
-  does not know higher ones.
+  upstream value, which is what you want; the mirrored value is capped at 25 because the bundled Go driver
+  (v1.17.10) does not know higher ones. An explicit value is sent as given and must be between 0 and 25 (the proxy
+  refuses to start otherwise).
 - `-shutdown-timeout` (default `30s`) is how long a SIGTERM/SIGINT waits for clients to disconnect. When it
   expires, the proxy force closes the remaining client connections and aborts their in-flight upstream requests.
   A second signal does the same at once and then exits with status 1 after a further 2 s if the process has not
@@ -154,8 +155,11 @@ Use a scratch database (`poc`) so the test data is easy to drop.
 
 Expected result: no uncaught exceptions. Writes issued during the election may be retried by the driver; reads
 may stall for as long as the election takes (bounded by `serverSelectionTimeoutMS` upstream) and then proceed.
-If the proxy does reply with an error during the window it is the retryable code 11602 with the
-`RetryableWriteError` label, which libmongoc retries once. Each such reply is counted in the
+If the proxy does reply with an error during the window it is code 11602 (InterruptedDueToReplStateChange),
+which libmongoc treats as retryable for reads and retries once. Its labels depend on the request: outside a
+transaction it carries `RetryableWriteError` (retryable writes retry once); inside a transaction it carries
+`TransientTransactionError` (the application retries the whole transaction); on `commitTransaction` it carries
+`RetryableWriteError` and `UnknownTransactionCommitResult` (the commit is retried). Each such reply is counted in the
 `proxy_error_reply` metric (tagged `code` and `command`) and logged as "Proxy error reply"; expect them only if
 the election outlasted the timeouts. Confirm in Atlas that a different member is
 now primary and that the loop's last iteration succeeded. Repeat three times.

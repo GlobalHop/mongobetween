@@ -31,7 +31,7 @@ Usage: mongobetween [OPTIONS] address1=uri1 [address2=uri2] ...
   -max-connections int
     	Maximum concurrently open client connections per listener; new ones beyond it are closed (0 = unlimited)
   -max-wire-version int
-    	maxWireVersion reported to clients in handshake replies (0 = mirror upstream)
+    	maxWireVersion reported to clients in handshake replies, 0..25 (0 = mirror upstream, capped at 25)
   -network string
     	One of: tcp, tcp4, tcp6, unix or unixpacket (default "tcp4")
   -password string

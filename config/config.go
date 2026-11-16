@@ -15,6 +15,7 @@ import (
 	"go.mongodb.org/mongo-driver/event"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/x/mongo/driver/connstring"
+	"go.mongodb.org/mongo-driver/x/mongo/driver/topology"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
@@ -159,7 +160,7 @@ func parseFlags() (*Config, error) {
 	flag.StringVar(&password, "password", "", "MongoDB password")
 	flag.StringVar(&stats, "statsd", defaultStatsdAddress, "Statsd address")
 	flag.BoolVar(&unlink, "unlink", false, "Unlink existing unix sockets before listening")
-	flag.IntVar(&maxWireVersion, "max-wire-version", 0, "maxWireVersion reported to clients in handshake replies (0 = mirror upstream)")
+	flag.IntVar(&maxWireVersion, "max-wire-version", 0, fmt.Sprintf("maxWireVersion reported to clients in handshake replies, 0..%d (0 = mirror upstream, capped at %d)", topology.SupportedWireVersions.Max, topology.SupportedWireVersions.Max))
 	flag.DurationVar(&checkoutTimeout, "checkout-timeout", 10*time.Second, "Maximum time to wait for an upstream connection checkout (0 = unbounded)")
 	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", 30*time.Second, "Maximum time to wait for client connections to close on shutdown before force closing them")
 	flag.BoolVar(&requireUpstreamTLS, "require-upstream-tls", false, "Refuse to start unless every upstream cluster is configured with TLS and certificate verification")
@@ -208,6 +209,9 @@ func parseFlags() (*Config, error) {
 		}
 	}
 
+	if maxWireVersion < 0 || maxWireVersion > int(topology.SupportedWireVersions.Max) {
+		return nil, fmt.Errorf("-max-wire-version must be between 0 and %d", topology.SupportedWireVersions.Max)
+	}
 	if maxConnections < 0 {
 		return nil, errors.New("-max-connections must not be negative")
 	}
