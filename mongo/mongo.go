@@ -413,3 +413,8 @@ func unwrapConnectionError(err error) error {
 
 	return nil
 }
+
+// CursorCount returns the number of cursors currently pinned to a server (for tests and diagnostics).
+func (m *Mongo) CursorCount() int {
+	return m.cursors.count()
+}
