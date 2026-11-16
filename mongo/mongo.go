@@ -200,6 +200,10 @@ func (m *Mongo) RoundTrip(msg *Message, tags []string) (_ *Message, err error) {
 	wm, err := m.roundTrip(conn, StripExhaustAllowed(msg.Wm), unacknowledged, tags)
 	if err != nil {
 		m.processError(err, ep, addr, conn)
+		if transactionDetails != nil {
+			// the pinned server may be gone; don't keep routing this lsid to it
+			m.transactions.remove(transactionDetails.LsID)
+		}
 		return nil, err
 	}
 	if unacknowledged {
@@ -254,21 +258,10 @@ func (m *Mongo) selectServer(requestCursorID int64, ns string, transDetails *Tra
 		_ = m.statsd.Timing("server_selection", time.Since(start), []string{fmt.Sprintf("success:%v", err == nil)}, 1)
 	}(time.Now())
 
-	// Check for a pinned server based on current transaction lsid first
-	if transDetails != nil {
-		if server, ok := m.transactions.peek(transDetails.LsID); ok {
-			m.log.Debug("found cached transaction", zap.String("lsid", fmt.Sprintf("%+v", transDetails)))
-			return server, nil
-		}
-	}
-
-	// Search for pinned cursor then
-	if requestCursorID != 0 {
-		server, ok := m.cursors.peek(requestCursorID, ns)
-		if ok {
-			m.log.Debug("Cached cursorID has been found", zap.Int64("cursor", requestCursorID), zap.String("ns", ns))
-			return server, nil
-		}
+	// Transaction pin (continuing statements only), then cursor pin
+	if server, ok := pinnedServer(m.transactions, m.cursors, transDetails, requestCursorID, ns); ok {
+		m.log.Debug("Using pinned server", zap.Int64("cursor", requestCursorID), zap.String("ns", ns))
+		return server, nil
 	}
 
 	// Select a server
