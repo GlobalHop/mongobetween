@@ -27,7 +27,7 @@ Recommended options for the upstream URI (the one the proxy uses to talk to Atla
 | `maxPoolSize` | `50` (start point) | Upper bound of connections per Atlas member from this proxy. See sizing in section 6. |
 | `minPoolSize` | `5` | Keeps warm connections so the first requests after idle do not pay connection setup. |
 | `serverSelectionTimeoutMS` | `15000` | How long the proxy waits for a primary during an election before giving up. Keep it below the PHP request timeout. |
-| `retryWrites` | leave at the default (`true`) | The Go driver retries once itself. Clients also retry on the retryable error replies the proxy returns. |
+| `retryWrites` | leave at the default (`true`) | Has no effect on proxied requests: they are forwarded as raw wire messages, so the proxy's Go driver never retries them; retries are done by the application's driver (libmongoc retries once) on the retryable error replies the proxy returns (`proxy_error_reply` metric, `Proxy error reply` log). |
 | `appName` | e.g. `mongobetween-poc` | Shows up in Atlas logs and the profiler, which helps tell proxy connections apart. |
 | `label` | e.g. `atlas` | Used by the proxy to tag its statsd metrics and logs for this cluster. |
 
@@ -153,8 +153,9 @@ Use a scratch database (`poc`) so the test data is easy to drop.
 Expected result: no uncaught exceptions. Writes issued during the election may be retried by the driver; reads
 may stall for as long as the election takes (bounded by `serverSelectionTimeoutMS` upstream) and then proceed.
 If the proxy does reply with an error during the window it is the retryable code 11602 with the
-`RetryableWriteError` label, which libmongoc retries once. Afterwards the proxy log shows a
-"Proxy error reply" line only if the election outlasted the timeouts. Confirm in Atlas that a different member is
+`RetryableWriteError` label, which libmongoc retries once. Each such reply is counted in the
+`proxy_error_reply` metric (tagged `code` and `command`) and logged as "Proxy error reply"; expect them only if
+the election outlasted the timeouts. Confirm in Atlas that a different member is
 now primary and that the loop's last iteration succeeded. Repeat three times.
 
 If you see failures, record the error code, the `Proxy error reply` log line and whether the failure happened
@@ -170,8 +171,11 @@ Metrics (all prefixed `mongobetween.`; the cluster `label` is added as a tag whe
 - `pool.open_connections` shows the actual connection count the proxy holds to Atlas.
 - `server_selection` (timing, tagged `success:true|false`). A burst of `success:false` is an election or a
   network problem. Rising timings show selection waiting.
-- `handle_message` (timing, tagged `success:true|false`). Failures here are requests the proxy could not
-  complete; a few during a failover are expected, a steady stream is not.
+- `handle_message` (timing, tagged `success:true|false`). `success:false` means a message could not be answered
+  at all and the client connection was closed. Error replies the proxy sends instead (selection or checkout
+  timeouts, pool cleared, disabled writes) are `success:true` here, so they do not show up in this metric.
+- `proxy_error_reply` (counter, tagged `code:<n>` and `command:<name>`) counts those error replies. A few with
+  `code:11602` during a failover are expected; a steady stream is not.
 - With `-auth-users-file`, `handle_message` for requests sent before authentication is tagged
   `command:unauthenticated` and carries no `collection` tag, so unauthenticated clients cannot create tag values.
 - `pool_event.connection_check_out_failed` and `pool_event.connection_pool_cleared` rising during a failover is

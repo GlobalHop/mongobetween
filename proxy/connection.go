@@ -215,9 +215,20 @@ func (c *connection) proxyErrorReply(op mongo.Operation, cause error) (*mongo.Me
 	return mongo.ErrorResponse(op, pe)
 }
 
+// logProxyError logs a proxy-generated error reply and counts it in the proxy_error_reply metric (tagged with the
+// error code and command), the signal to watch during failovers: error replies are success:true in handle_message.
 func (c *connection) logProxyError(op mongo.Operation, pe mongo.ProxyError, cause error) {
 	command, _ := op.CommandAndCollection()
 	c.log.Warn("Proxy error reply", zap.Error(cause), zap.Int32("code", pe.Code), zap.String("command", string(command)))
+
+	commandTag := string(command)
+	if c.unauthenticated() {
+		commandTag = "unauthenticated"
+	}
+	_ = c.statsd.Incr("proxy_error_reply", []string{
+		fmt.Sprintf("code:%d", pe.Code),
+		fmt.Sprintf("command:%s", commandTag),
+	}, 1)
 }
 
 // headerSize is the size of the standard wire message header (messageLength, requestID, responseTo, opCode).

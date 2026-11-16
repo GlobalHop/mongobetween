@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -187,5 +189,36 @@ func TestStatsdTagsBeforeAuthentication(t *testing.T) {
 			assert.Contains(t, lines[0], "command:find", name)
 			assert.Contains(t, lines[0], "collection:secret_coll", name)
 		}
+	}
+}
+
+func TestProxyErrorReplyMetric(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "dynamic.json")
+	assert.NoError(t, os.WriteFile(path, []byte(`{"Clusters": {"test-addr": {"DisableWrites": true}}}`), 0o600))
+	dynamic, err := NewDynamic(path, zap.NewNop())
+	assert.NoError(t, err)
+	t.Cleanup(dynamic.Close)
+
+	sd, metrics := capturingStatsd(t)
+	core, logs := observer.New(zapcore.InfoLevel)
+	client, server := net.Pipe()
+	defer func() { _ = client.Close() }()
+	c := &connection{log: zap.New(core), statsd: sd, conn: server, address: "test-addr", dynamic: dynamic,
+		mongoLookup: func(string) *mongob.Mongo { return nil }}
+
+	insert := opMsgBytes(t, bson.D{{Key: "insert", Value: "c"}, {Key: "$db", Value: "test"}})
+	go func() {
+		_, _ = client.Write(insert)
+		_, _ = io.Copy(io.Discard, client)
+	}()
+	assert.NoError(t, c.handleMessage())
+	_ = server.Close()
+
+	assert.Equal(t, 1, logs.FilterMessage("Proxy error reply").Len())
+	lines := metricLines(metrics(), "proxy_error_reply:")
+	if assert.Len(t, lines, 1) {
+		assert.Contains(t, lines[0], "|c|")
+		assert.Contains(t, lines[0], "code:13")
+		assert.Contains(t, lines[0], "command:insert")
 	}
 }
