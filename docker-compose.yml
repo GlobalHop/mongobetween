@@ -60,3 +60,44 @@ services:
         }
         print("timed out waiting for primary");
         quit(1);
+
+  # --- PHP / libmongoc smoke test (profile "php"; see scripts/php-smoke.sh) ---
+  mongobetween: &proxy
+    profiles: ["php"]
+    build: .
+    command:
+      - -ping
+      - -loglevel
+      - info
+      - ":27016=mongodb://rs1:27017,rs2:27017,rs3:27017/?replicaSet=rs0&serverSelectionTimeoutMS=15000"
+    depends_on:
+      rs-init:
+        condition: service_completed_successfully
+
+  mongobetween-secure:
+    <<: *proxy
+    command:
+      - -ping
+      - -loglevel
+      - info
+      - -auth-users-file
+      - /certs/users.txt
+      - -tls-cert-file
+      - /certs/server.pem
+      - -tls-key-file
+      - /certs/server.key
+      - ":27017=mongodb://rs1:27017,rs2:27017,rs3:27017/?replicaSet=rs0&serverSelectionTimeoutMS=15000"
+    volumes:
+      - "${SMOKE_CERTS_DIR:-./.smoke-certs}:/certs:ro"
+
+  php-smoke:
+    profiles: ["php"]
+    build:
+      context: test/php
+    depends_on:
+      - mongobetween
+      - mongobetween-secure
+    environment:
+      SMOKE_PROXY_PASSWORD: "${SMOKE_PROXY_PASSWORD:-}"
+    volumes:
+      - "${SMOKE_CERTS_DIR:-./.smoke-certs}:/certs:ro"

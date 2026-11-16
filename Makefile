@@ -1,4 +1,4 @@
-.PHONY: build docker test test-unit test-docker test-docker-down lint
+.PHONY: build docker test test-unit test-docker test-docker-down php-smoke lint
 
 build:
 	go build -o bin/mongobetween .
@@ -21,3 +21,6 @@ lint:
 
 test-docker-down:
 	docker compose -p mongobetween-test down -v
+
+php-smoke:
+	./scripts/php-smoke.sh
