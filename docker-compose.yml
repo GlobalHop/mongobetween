@@ -1,15 +1,62 @@
-version: "3.7"
-
 services:
   mongo1:
     image: "mongo:5.0"
-    ports:
-      - "27017:27017"
   mongo2:
     image: "mongo:5.0"
-    ports:
-      - "27018:27017"
   mongo3:
     image: "mongo:5.0"
-    ports:
-      - "27019:27017"
+
+  rs1: &rs
+    image: "mongo:8.0"
+    command: ["--replSet", "rs0", "--bind_ip_all"]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand({ping:1}).ok"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+  rs2:
+    <<: *rs
+  rs3:
+    <<: *rs
+
+  rs-init:
+    image: "mongo:8.0"
+    restart: "no"
+    depends_on:
+      rs1:
+        condition: service_healthy
+      rs2:
+        condition: service_healthy
+      rs3:
+        condition: service_healthy
+    entrypoint:
+      - mongosh
+      - --quiet
+      - --host
+      - rs1
+      - --eval
+      - |
+        try {
+          rs.status();
+        } catch (e) {
+          rs.initiate({_id: "rs0", members: [
+            {_id: 0, host: "rs1:27017"},
+            {_id: 1, host: "rs2:27017"},
+            {_id: 2, host: "rs3:27017"},
+          ]});
+        }
+        const deadline = Date.now() + 60000;
+        while (Date.now() < deadline) {
+          for (const host of ["rs1", "rs2", "rs3"]) {
+            try {
+              const h = new Mongo(host + ":27017").getDB("admin").hello();
+              if (h.isWritablePrimary) {
+                print("replica set ready, primary " + host);
+                quit(0);
+              }
+            } catch (e) {}
+          }
+          sleep(1000);
+        }
+        print("timed out waiting for primary");
+        quit(1);
