@@ -9,9 +9,10 @@ docker:
 # Full suite, always inside the docker harness (never against a MongoDB on the host).
 test: test-docker
 
-# Host-only run: DB-backed tests skip unless CI=true, so this runs only DB-free unit tests.
+# Host-only run: DB-backed tests skip unless CI=true, so this runs only DB-free unit tests. CI is unset explicitly
+# so an exported CI=true (as on CI runners) can never point the DB tests at a MongoDB on the host.
 test-unit:
-	go test -count 1 -race ./...
+	env -u CI go test -count 1 -race ./...
 
 test-docker:
 	./scripts/test-docker.sh
