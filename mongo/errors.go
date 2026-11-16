@@ -69,6 +69,11 @@ func ErrorResponse(req Operation, pe ProxyError) (*Message, error) {
 	return encodeDocumentReply(req, raw)
 }
 
+// DocumentResponse encodes doc as a locally generated single-document reply to req, in the same opcode as req.
+func DocumentResponse(req Operation, doc bsoncore.Document) (*Message, error) {
+	return encodeDocumentReply(req, doc)
+}
+
 // encodeDocumentReply encodes doc as a single-document reply to req, in the same opcode as req.
 func encodeDocumentReply(req Operation, doc bsoncore.Document) (*Message, error) {
 	responseTo := req.RequestID()

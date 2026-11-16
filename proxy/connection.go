@@ -27,9 +27,13 @@ type connection struct {
 
 	mongoLookup MongoLookup
 	dynamic     *Dynamic
+
+	// users is nil when inbound authentication is off.
+	users *Users
+	auth  authSession
 }
 
-func handleConnection(log *zap.Logger, sd *statsd.Client, address string, conn net.Conn, mongoLookup MongoLookup, dynamic *Dynamic, kill chan interface{}) {
+func handleConnection(log *zap.Logger, sd *statsd.Client, address string, conn net.Conn, mongoLookup MongoLookup, dynamic *Dynamic, users *Users, kill chan interface{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("Connection crashed", zap.String("panic", fmt.Sprintf("%v", r)), zap.String("stack", string(debug.Stack())))
@@ -46,6 +50,7 @@ func handleConnection(log *zap.Logger, sd *statsd.Client, address string, conn n
 
 		mongoLookup: mongoLookup,
 		dynamic:     dynamic,
+		users:       users,
 	}
 	c.processMessages()
 }
@@ -104,6 +109,17 @@ func (c *connection) handleMessage() (err error) {
 		zap.String("collection", collection),
 		zap.Int("request_size", len(wm)),
 	)
+
+	if res, handled, authErr := c.authorize(op); handled {
+		if authErr != nil {
+			err = authErr
+			return
+		}
+		if res != nil && !unacknowledged {
+			_, err = c.conn.Write(res.Wm)
+		}
+		return
+	}
 
 	req := &mongo.Message{
 		Wm: wm,
@@ -205,8 +221,16 @@ func (c *connection) roundTrip(msg *mongo.Message, isMaster bool, tags []string)
 
 	if isMaster {
 		c.log.Debug("Non-proxied handshake response", zap.Int32("request_id", msg.Op.RequestID()))
-		return client.HandshakeResponse(msg.Op)
+		return client.HandshakeResponse(msg.Op, c.saslMechs())
 	}
 
 	return client.RoundTrip(msg, tags)
+}
+
+// saslMechs is advertised in handshake replies: nil when inbound authentication is off.
+func (c *connection) saslMechs() []string {
+	if c.users == nil {
+		return nil
+	}
+	return c.users.Mechanisms()
 }

@@ -89,9 +89,10 @@ func Connect(log *zap.Logger, sd *statsd.Client, opts *options.ClientOptions, s 
 	return &m, nil
 }
 
-// HandshakeResponse answers a client handshake locally, pretending to be a mongos.
-func (m *Mongo) HandshakeResponse(req Operation) (*Message, error) {
-	return BuildHandshakeResponse(req, m.Description(), m.settings.MaxWireVersion)
+// HandshakeResponse answers a client handshake locally, pretending to be a mongos. saslMechs is advertised in
+// saslSupportedMechs when the client asks for it; nil when inbound auth is off.
+func (m *Mongo) HandshakeResponse(req Operation, saslMechs []string) (*Message, error) {
+	return BuildHandshakeResponse(req, m.Description(), m.settings.MaxWireVersion, saslMechs)
 }
 
 func (m *Mongo) Description() description.Topology {

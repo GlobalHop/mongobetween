@@ -50,24 +50,37 @@ func ReportedMaxWireVersion(topo description.Topology, override int32) int32 {
 }
 
 // BuildHandshakeResponse builds a hard-coded handshake response, emulating a mongos, in the same opcode as the request.
-func BuildHandshakeResponse(req Operation, topo description.Topology, maxWireOverride int32) (*Message, error) {
-	cmd := Hello
+// When saslMechs is non-empty (inbound auth on) and the client asked for saslSupportedMechs, the reply advertises
+// saslMechs regardless of whether the named user exists, so user existence does not leak.
+func BuildHandshakeResponse(req Operation, topo description.Topology, maxWireOverride int32, saslMechs []string) (*Message, error) {
+	cmd := Unknown
+	var reqDoc bsoncore.Document
 	switch r := req.(type) {
 	case *opMsg:
 		for _, s := range r.sections {
 			if single, ok := s.(*opMsgSectionSingle); ok {
-				cmd = HandshakeCommandOf(single.msg)
+				reqDoc = single.msg
 				break
 			}
 		}
 	case *opQuery:
-		cmd = HandshakeCommandOf(r.query)
+		reqDoc = r.query
+	}
+	if reqDoc != nil {
+		cmd = HandshakeCommandOf(reqDoc)
 	}
 	if cmd == Unknown {
 		return nil, fmt.Errorf("not a handshake request")
 	}
 
-	doc, err := handshakeDocument(cmd, topo.Kind, ReportedMaxWireVersion(topo, maxWireOverride))
+	var mechs []string
+	if len(saslMechs) > 0 {
+		if _, ok := reqDoc.Lookup("saslSupportedMechs").StringValueOK(); ok {
+			mechs = saslMechs
+		}
+	}
+
+	doc, err := handshakeDocument(cmd, topo.Kind, ReportedMaxWireVersion(topo, maxWireOverride), mechs)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +88,7 @@ func BuildHandshakeResponse(req Operation, topo description.Topology, maxWireOve
 	return encodeDocumentReply(req, doc)
 }
 
-func handshakeDocument(cmd Command, kind description.TopologyKind, maxWire int32) (bsoncore.Document, error) {
+func handshakeDocument(cmd Command, kind description.TopologyKind, maxWire int32, saslMechs []string) (bsoncore.Document, error) {
 	primaryKey := "ismaster"
 	if cmd == Hello {
 		primaryKey = "isWritablePrimary"
@@ -94,7 +107,10 @@ func handshakeDocument(cmd Command, kind description.TopologyKind, maxWire int32
 		bson.E{Key: "maxWireVersion", Value: maxWire},
 		bson.E{Key: "minWireVersion", Value: int32(0)},
 		bson.E{Key: "readOnly", Value: false},
-		bson.E{Key: "ok", Value: 1.0},
 	)
+	if len(saslMechs) > 0 {
+		doc = append(doc, bson.E{Key: "saslSupportedMechs", Value: saslMechs})
+	}
+	doc = append(doc, bson.E{Key: "ok", Value: 1.0})
 	return bson.Marshal(doc)
 }

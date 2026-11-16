@@ -93,7 +93,7 @@ func assertAbsent(t *testing.T, doc bsoncore.Document, keys ...string) {
 }
 
 func TestHandshakeResponseOpMsgHello(t *testing.T) {
-	resp, err := BuildHandshakeResponse(handshakeMsgRequest(t, "hello"), rsTopology(), 0)
+	resp, err := BuildHandshakeResponse(handshakeMsgRequest(t, "hello"), rsTopology(), 0, nil)
 	assert.Nil(t, err)
 	doc := decodeMsgReply(t, resp)
 
@@ -107,7 +107,7 @@ func TestHandshakeResponseOpMsgHello(t *testing.T) {
 }
 
 func TestHandshakeResponseOpMsgIsMaster(t *testing.T) {
-	resp, err := BuildHandshakeResponse(handshakeMsgRequest(t, "isMaster"), rsTopology(), 0)
+	resp, err := BuildHandshakeResponse(handshakeMsgRequest(t, "isMaster"), rsTopology(), 0, nil)
 	assert.Nil(t, err)
 	doc := decodeMsgReply(t, resp)
 
@@ -120,7 +120,7 @@ func TestHandshakeResponseOpQuery(t *testing.T) {
 	assert.Nil(t, err)
 	req := &opQuery{reqID: 9, fullCollectionName: "admin.$cmd", query: doc}
 
-	resp, err := BuildHandshakeResponse(req, rsTopology(), 0)
+	resp, err := BuildHandshakeResponse(req, rsTopology(), 0, nil)
 	assert.Nil(t, err)
 	op, err := Decode(resp.Wm)
 	assert.Nil(t, err)
@@ -135,9 +135,98 @@ func TestHandshakeResponseSingle(t *testing.T) {
 		Kind:    description.Single,
 		Servers: []description.Server{serverWithWire(description.Standalone, 25)},
 	}
-	resp, err := BuildHandshakeResponse(handshakeMsgRequest(t, "hello"), topo, 0)
+	resp, err := BuildHandshakeResponse(handshakeMsgRequest(t, "hello"), topo, 0, nil)
 	assert.Nil(t, err)
 	doc := decodeMsgReply(t, resp)
 	assertAbsent(t, doc, "msg")
 	assert.Equal(t, int32(25), doc.Lookup("maxWireVersion").Int32())
+}
+
+func handshakeMsgRequestDoc(t *testing.T, doc bson.D) *opMsg {
+	t.Helper()
+	raw, err := bson.Marshal(doc)
+	assert.Nil(t, err)
+	return &opMsg{reqID: 11, sections: []opMsgSection{&opMsgSectionSingle{msg: raw}}}
+}
+
+func TestHandshakeResponseHeader(t *testing.T) {
+	resp, err := BuildHandshakeResponse(handshakeMsgRequest(t, "hello"), rsTopology(), 0, nil)
+	assert.Nil(t, err)
+	length, _, responseTo, opCode, _, ok := wiremessage.ReadHeader(resp.Wm)
+	assert.True(t, ok)
+	assert.Equal(t, int32(7), responseTo)
+	assert.Equal(t, int32(len(resp.Wm)), length)
+	assert.Equal(t, wiremessage.OpMsg, opCode)
+}
+
+func TestHandshakeResponseNoSingleSection(t *testing.T) {
+	req := &opMsg{reqID: 3, sections: []opMsgSection{&opMsgSectionSequence{identifier: "documents"}}}
+	_, err := BuildHandshakeResponse(req, rsTopology(), 0, nil)
+	assert.Error(t, err)
+}
+
+func TestHandshakeResponseSaslSupportedMechs(t *testing.T) {
+	mechs := []string{"SCRAM-SHA-256"}
+	withUser := bson.D{
+		{Key: "hello", Value: 1},
+		{Key: "saslSupportedMechs", Value: "admin.app"},
+		{Key: "speculativeAuthenticate", Value: bson.D{{Key: "saslStart", Value: 1}}},
+		{Key: "$db", Value: "admin"},
+	}
+
+	t.Run("advertised when requested and auth on", func(t *testing.T) {
+		resp, err := BuildHandshakeResponse(handshakeMsgRequestDoc(t, withUser), rsTopology(), 0, mechs)
+		assert.Nil(t, err)
+		doc := decodeMsgReply(t, resp)
+		arr, ok := doc.Lookup("saslSupportedMechs").ArrayOK()
+		assert.True(t, ok)
+		vals, err := arr.Values()
+		assert.Nil(t, err)
+		assert.Equal(t, 1, len(vals))
+		assert.Equal(t, "SCRAM-SHA-256", vals[0].StringValue())
+		assertAbsent(t, doc, "helloOk", "topologyVersion", "compression", "setName", "hosts", "speculativeAuthenticate")
+	})
+
+	t.Run("absent when auth off", func(t *testing.T) {
+		resp, err := BuildHandshakeResponse(handshakeMsgRequestDoc(t, withUser), rsTopology(), 0, nil)
+		assert.Nil(t, err)
+		assertAbsent(t, decodeMsgReply(t, resp), "saslSupportedMechs", "speculativeAuthenticate")
+	})
+
+	t.Run("absent when not requested", func(t *testing.T) {
+		resp, err := BuildHandshakeResponse(handshakeMsgRequest(t, "hello"), rsTopology(), 0, mechs)
+		assert.Nil(t, err)
+		assertAbsent(t, decodeMsgReply(t, resp), "saslSupportedMechs")
+	})
+
+	t.Run("op_query", func(t *testing.T) {
+		raw, err := bson.Marshal(bson.D{{Key: "isMaster", Value: 1}, {Key: "saslSupportedMechs", Value: "admin.app"}})
+		assert.Nil(t, err)
+		req := &opQuery{reqID: 9, fullCollectionName: "admin.$cmd", query: raw}
+		resp, err := BuildHandshakeResponse(req, rsTopology(), 0, mechs)
+		assert.Nil(t, err)
+		op, err := Decode(resp.Wm)
+		assert.Nil(t, err)
+		_, ok := op.(*opReply).documents[0].Lookup("saslSupportedMechs").ArrayOK()
+		assert.True(t, ok)
+	})
+}
+
+func TestCommandName(t *testing.T) {
+	msg := handshakeMsgRequestDoc(t, bson.D{{Key: "saslStart", Value: 1}, {Key: "$db", Value: "admin"}})
+	doc, ok := CommandDocument(msg)
+	assert.True(t, ok)
+	assert.Equal(t, "saslStart", CommandName(doc))
+
+	raw, err := bson.Marshal(bson.D{{Key: "$query", Value: bson.D{{Key: "ping", Value: 1}}}})
+	assert.Nil(t, err)
+	doc, ok = CommandDocument(&opQuery{fullCollectionName: "admin.$cmd", query: raw})
+	assert.True(t, ok)
+	assert.Equal(t, "ping", CommandName(doc))
+
+	_, ok = CommandDocument(&opQuery{fullCollectionName: "test.coll", query: raw})
+	assert.False(t, ok)
+	_, ok = CommandDocument(&opUnknown{})
+	assert.False(t, ok)
+	assert.Equal(t, "", CommandName(nil))
 }

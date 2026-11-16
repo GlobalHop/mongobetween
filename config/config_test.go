@@ -205,3 +205,45 @@ func TestTLSCertWithoutKey(t *testing.T) {
 	_, err := parseFlags()
 	assert.EqualError(t, err, "both TLS certificate and key files are required")
 }
+
+func TestAuthUsersFile(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/users"
+	assert.Nil(t, os.WriteFile(path, []byte("app:s3cret\n"), 0o600))
+
+	env := "TEST_AUTH_DIR"
+	oldEnv := os.Getenv(env)
+	defer func() { _ = os.Setenv(env, oldEnv) }()
+	_ = os.Setenv(env, dir)
+
+	oldArgs := os.Args
+	defer func() { os.Args = oldArgs }()
+	os.Args = []string{
+		"mongobetween",
+		"-auth-users-file", "${TEST_AUTH_DIR}/users",
+		"/tmp/mongo1.sock=mongodb://localhost:27127/database?maxpoolsize=5&label=cluster1",
+	}
+	resetFlags()
+	c, err := parseFlags()
+	assert.Nil(t, err)
+	assert.NotNil(t, c.users)
+	assert.Equal(t, 1, c.users.Count())
+
+	os.Args = []string{
+		"mongobetween",
+		"/tmp/mongo1.sock=mongodb://localhost:27127/database?maxpoolsize=5&label=cluster1",
+	}
+	resetFlags()
+	c, err = parseFlags()
+	assert.Nil(t, err)
+	assert.Nil(t, c.users)
+
+	os.Args = []string{
+		"mongobetween",
+		"-auth-users-file", dir + "/missing",
+		"/tmp/mongo1.sock=mongodb://localhost:27127/database?maxpoolsize=5&label=cluster1",
+	}
+	resetFlags()
+	_, err = parseFlags()
+	assert.Error(t, err)
+}

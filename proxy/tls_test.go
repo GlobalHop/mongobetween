@@ -126,7 +126,7 @@ func TestProxyTLS(t *testing.T) {
 	defer upstream.Close()
 
 	proxy, err := NewProxy(zap.L(), sd, "label", "tcp4", ":27025", false,
-		func(string) *mongob.Mongo { return upstream }, dynamic, tlsCfg)
+		func(string) *mongob.Mongo { return upstream }, dynamic, tlsCfg, nil)
 	assert.NoError(t, err)
 	go func() { _ = proxy.Run() }()
 	defer proxy.Kill()

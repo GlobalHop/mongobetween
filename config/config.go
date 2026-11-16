@@ -42,6 +42,7 @@ type Config struct {
 	level           zapcore.Level
 	dynamic         string
 	tlsConfig       *tls.Config
+	users           *proxy.Users
 	statsdaddr      string
 	logger          *zap.Logger
 	statsd          *statsd.Client
@@ -112,7 +113,7 @@ func (c *Config) Proxies(log *zap.Logger) (proxies []*proxy.Proxy, err error) {
 	}
 
 	for _, client := range c.clients {
-		p, err := proxy.NewProxy(log, c.statsd, client.label, c.network, client.address, c.unlink, mongoLookup, d, c.tlsConfig)
+		p, err := proxy.NewProxy(log, c.statsd, client.label, c.network, client.address, c.unlink, mongoLookup, d, c.tlsConfig, c.users)
 		if err != nil {
 			return nil, err
 		}
@@ -141,7 +142,7 @@ func parseFlags() (*Config, error) {
 	var shutdownTimeout time.Duration
 	var requireUpstreamTLS bool
 	var unlink, ping, pretty, enableSdamMetrics, enableSdamLogging bool
-	var tlsCertFile, tlsKeyFile, tlsCAFile string
+	var tlsCertFile, tlsKeyFile, tlsCAFile, authUsersFile string
 	var network, username, password, stats, loglevel, dynamic string
 	flag.StringVar(&network, "network", "tcp4", "One of: tcp, tcp4, tcp6, unix or unixpacket")
 	flag.StringVar(&username, "username", "", "MongoDB username")
@@ -155,6 +156,7 @@ func parseFlags() (*Config, error) {
 	flag.StringVar(&tlsCertFile, "tls-cert-file", "", "Server certificate (PEM) enabling TLS on the client listener")
 	flag.StringVar(&tlsKeyFile, "tls-key-file", "", "Server private key (PEM) enabling TLS on the client listener")
 	flag.StringVar(&tlsCAFile, "tls-ca-file", "", "CA bundle (PEM); when set, client certificates are required and verified (mTLS)")
+	flag.StringVar(&authUsersFile, "auth-users-file", "", "File of proxy-only username:password lines enabling inbound SCRAM-SHA-256 authentication (empty = auth off)")
 	flag.BoolVar(&ping, "ping", false, "Ping downstream MongoDB before listening")
 	flag.BoolVar(&pretty, "pretty", false, "Pretty print logging")
 	flag.StringVar(&loglevel, "loglevel", "info", "One of: debug, info, warn, error, dpanic, panic, fatal")
@@ -173,6 +175,7 @@ func parseFlags() (*Config, error) {
 	tlsCertFile = expandEnv(tlsCertFile)
 	tlsKeyFile = expandEnv(tlsKeyFile)
 	tlsCAFile = expandEnv(tlsCAFile)
+	authUsersFile = expandEnv(authUsersFile)
 
 	var tlsConfig *tls.Config
 	if tlsCertFile != "" || tlsKeyFile != "" {
@@ -220,6 +223,12 @@ func parseFlags() (*Config, error) {
 	}
 
 	loggerClient := newLogger(level, pretty)
+
+	users, err := loadAuthUsers(loggerClient, authUsersFile)
+	if err != nil {
+		return nil, err
+	}
+
 	statsdClient, err := newStatsdClientInit(stats)
 	if err != nil {
 		return nil, err
@@ -258,9 +267,27 @@ func parseFlags() (*Config, error) {
 		level:           level,
 		dynamic:         dynamic,
 		tlsConfig:       tlsConfig,
+		users:           users,
 		logger:          loggerClient,
 		statsd:          statsdClient,
 	}, nil
+}
+
+// loadAuthUsers loads the inbound auth users file; an empty path means auth is off (nil users). Passwords are never
+// logged.
+func loadAuthUsers(log *zap.Logger, path string) (*proxy.Users, error) {
+	if path == "" {
+		return nil, nil
+	}
+	users, err := proxy.LoadUsers(path)
+	if err != nil {
+		return nil, err
+	}
+	if users.GroupOrOtherAccessible() {
+		log.Warn("Auth users file is accessible by group or other; restrict it to the owner (chmod 600)", zap.String("path", path))
+	}
+	log.Info("Inbound SCRAM-SHA-256 authentication enabled", zap.Int("users", users.Count()))
+	return users, nil
 }
 
 // validateUpstreamTLS errors if any upstream client has no TLS configuration. The error names only the listen

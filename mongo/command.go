@@ -1,6 +1,8 @@
 package mongo
 
 import (
+	"strings"
+
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
 )
@@ -106,4 +108,39 @@ func IsIsMasterValueTruthy(val bsoncore.Value) bool {
 		return val.Boolean()
 	}
 	return false
+}
+
+// CommandDocument returns the command document of an OP_MSG request (its body section) or of an OP_QUERY command
+// against a "<db>.$cmd" namespace (unwrapping a leading $query/query wrapper). ok is false for any other operation.
+func CommandDocument(op Operation) (doc bsoncore.Document, ok bool) {
+	switch o := op.(type) {
+	case *opMsg:
+		for _, s := range o.sections {
+			if single, isSingle := s.(*opMsgSectionSingle); isSingle {
+				return single.msg, true
+			}
+		}
+	case *opQuery:
+		if !strings.HasSuffix(o.fullCollectionName, ".$cmd") {
+			return nil, false
+		}
+		if first := CommandName(o.query); first == "$query" || first == "query" {
+			inner, isDoc := o.query.Lookup(first).DocumentOK()
+			return inner, isDoc
+		}
+		return o.query, true
+	}
+	return nil, false
+}
+
+// CommandName returns the command name of a command document: its first element key, or "" if there is none.
+func CommandName(doc bsoncore.Document) string {
+	if len(doc) == 0 {
+		return ""
+	}
+	elem, err := doc.IndexErr(0)
+	if err != nil {
+		return ""
+	}
+	return elem.Key()
 }
