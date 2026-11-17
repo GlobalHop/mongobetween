@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
+	"go.mongodb.org/mongo-driver/x/mongo/driver"
 	"go.mongodb.org/mongo-driver/x/mongo/driver/topology"
 )
 
@@ -71,6 +73,9 @@ func ClassifyProxyError(err error, req Operation) ProxyError {
 		Message:  upstreamErrorMessage(err),
 		Labels:   []string{labelRetryableWrite},
 	}
+	if sc, ok := upstreamStateChange(err); ok {
+		pe.Code, pe.CodeName, pe.Message = sc.code, sc.name, sc.message
+	}
 	if req == nil || req.TransactionDetails() == nil {
 		return pe
 	}
@@ -80,6 +85,52 @@ func ClassifyProxyError(err error, req Operation) ProxyError {
 		pe.Labels = []string{labelTransientTransaction}
 	}
 	return pe
+}
+
+// stateChange is a server state-change error the proxy forwards with its real code, so drivers react to what the
+// upstream actually reported (shutdown, step-down, ...) instead of a generic replacement.
+type stateChange struct {
+	code    int32
+	name    string
+	message string
+}
+
+// stateChanges is the single table of forwarded server codes, keyed by code. Messages are fixed and host-free.
+var stateChanges = map[int32]stateChange{
+	91:    {91, "ShutdownInProgress", "upstream server shutting down (ShutdownInProgress)"},
+	11600: {11600, "InterruptedAtShutdown", "upstream server shutting down (InterruptedAtShutdown)"},
+	11602: {11602, "InterruptedDueToReplStateChange", "upstream primary changed (InterruptedDueToReplStateChange)"},
+	10107: {10107, "NotWritablePrimary", "upstream primary changed (NotWritablePrimary)"},
+	13435: {13435, "NotPrimaryNoSecondaryOk", "upstream primary changed (NotPrimaryNoSecondaryOk)"},
+	13436: {13436, "NotPrimaryOrSecondary", "upstream primary changed (NotPrimaryOrSecondary)"},
+	189:   {189, "PrimarySteppedDown", "upstream primary changed (PrimarySteppedDown)"},
+}
+
+// poolClearedCause extracts the codeName from the text of the driver's pool-cleared error. That error type is
+// unexported and has no Unwrap, so its cause (a server error rendered as "(CodeName) message") is only in its text.
+var poolClearedCause = regexp.MustCompile(`was cleared because another operation failed with: \((\w+)\)`)
+
+// upstreamStateChange finds a state-change server error in err's chain. A driver.Error carrying a table code is
+// used directly; a pool-cleared error (a driver.RetryablePoolError) is matched by the codeName in its text.
+func upstreamStateChange(err error) (stateChange, bool) {
+	for cur := err; cur != nil; cur = errors.Unwrap(cur) {
+		var derr driver.Error
+		if errors.As(cur, &derr) && derr.Code != 0 {
+			if sc, ok := stateChanges[derr.Code]; ok {
+				return sc, true
+			}
+		}
+		if _, ok := cur.(driver.RetryablePoolError); ok {
+			if m := poolClearedCause.FindStringSubmatch(cur.Error()); m != nil {
+				for _, sc := range stateChanges {
+					if sc.name == m[1] {
+						return sc, true
+					}
+				}
+			}
+		}
+	}
+	return stateChange{}, false
 }
 
 // upstreamErrorMessage picks the fixed client-visible message for an upstream failure.

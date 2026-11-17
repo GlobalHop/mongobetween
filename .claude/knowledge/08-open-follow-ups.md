@@ -20,6 +20,9 @@ them. Items already fixed in the final fix wave (`7fa5a71..16c8717`) are listed 
   - Statsd tags are not set from client data.
 - TLS on the plain port: a client that starts a TLS handshake is detected and closed. Message bodies are read
   incrementally.
+- State-change server codes (91, 11600, 11602, 10107, 13435, 13436, 189) are forwarded with their real code and
+  codeName instead of a generic 11602, also when the driver wraps them in a cleared-pool error (parsed from its
+  text, as the driver type is unexported and has no Unwrap). Seen on an Atlas failover (quiesce mode).
 - Docs: the wire-version cap wording and the 11602 transaction-label wording are corrected. Added
   `.dockerignore`, dropped the CI `checks: write` permission, and `make test-unit` now runs with CI unset.
 

@@ -155,8 +155,9 @@ Use a scratch database (`poc`) so the test data is easy to drop.
 
 Expected result: no uncaught exceptions. Writes issued during the election may be retried by the driver; reads
 may stall for as long as the election takes (bounded by `serverSelectionTimeoutMS` upstream) and then proceed.
-If the proxy does reply with an error during the window it is code 11602 (InterruptedDueToReplStateChange),
-which libmongoc treats as retryable for reads and retries once. Its labels depend on the request: outside a
+If the proxy does reply with an error during the window it is usually the code the upstream itself reported
+(see the state-change table below, for example 91 ShutdownInProgress when a primary enters quiesce mode),
+otherwise code 11602 (InterruptedDueToReplStateChange), which libmongoc treats as retryable for reads and retries once. Its labels depend on the request: outside a
 transaction it carries `RetryableWriteError` (retryable writes retry once); inside a transaction it carries
 `TransientTransactionError` (the application retries the whole transaction); on `commitTransaction` it carries
 `RetryableWriteError` and `UnknownTransactionCommitResult` (the commit is retried). Each such reply is counted in the
@@ -172,8 +173,14 @@ server selection timeout gets the same reply. Primary requests that hit it get 1
 Client-visible `errmsg` values are fixed strings prefixed `mongobetween: ` and never carry upstream hostnames or
 topology text; the full cause is in the "Proxy error reply" log line.
 
+State-change codes (91, 11600, 11602, 10107, 13435, 13436, 189) are forwarded with their real code and codeName when
+the upstream reported them, including when the driver reports them as the cause of a cleared connection pool (for
+example a getMore on a cursor pinned to a primary that began shutting down). Labels follow the same rules as for
+11602. Any other cause is answered with the generic 11602 reply.
+
 | Code | Name | Labels | errmsg |
 | --- | --- | --- | --- |
+| 91, 11600, 11602, 10107, 13435, 13436, 189 | the upstream's own codeName | see above | `upstream server shutting down (<codeName>)` (91, 11600) or `upstream primary changed (<codeName>)` (the rest) |
 | 11602 | InterruptedDueToReplStateChange | see above | `upstream unavailable (no suitable server; failover in progress?)`, `request cancelled` or `upstream error` |
 | 133 | FailedToSatisfyReadPreference | none | `no upstream server matches the read preference` |
 | 13 | Unauthorized | none | `writes are disabled` |
