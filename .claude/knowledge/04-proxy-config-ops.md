@@ -78,5 +78,5 @@ mongobetween [OPTIONS] address1=uri1 [address2=uri2] ...
   no auth, no TLS.
 - Tests use those standalones, so **only the `Single` persona is ever tested**. There is no coverage for the
   sharded persona, replica sets, `hello`, auth, TLS, SRV or libmongoc.
-- CI: GitHub Actions with `mongo:5` service containers, gotestsum, golangci-lint, Salus.
+- CI: GitHub Actions with `mongo:5` service containers, gotestsum, golangci-lint, gosec, govulncheck, trufflehog.
 - Go is not installed on this dev machine (as of 2026-11-16).

@@ -33,9 +33,34 @@ jobs:
         with:
           version: v2.15.0
 
-  salus:
+  gosec:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: |
-          sudo docker run -t -v $(pwd):/home/repo coinbase/salus
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      # G115 (integer conversion) is excluded: the wire-protocol code converts in-memory message lengths that
+      # are bounded by the server's max message size.
+      - uses: securego/gosec@v2.30.0
+        with:
+          args: -exclude=G115 ./...
+
+  govulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: golang/govulncheck-action@v1.1.0
+        with:
+          go-version-input: ${{ env.GO_VERSION }}
+          go-package: ./...
+
+  trufflehog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: trufflesecurity/trufflehog@v3.99.9
+        with:
+          extra_args: --only-verified
