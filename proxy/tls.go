@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -36,7 +37,7 @@ func loadServerTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error) 
 	}
 
 	if caFile != "" {
-		caPEM, err := os.ReadFile(caFile) //nolint:gosec // operator supplied path
+		caPEM, err := os.ReadFile(filepath.Clean(caFile)) // #nosec G304 -- path comes from an operator-supplied CLI flag
 		if err != nil {
 			return nil, fmt.Errorf("reading TLS CA file: %w", err)
 		}

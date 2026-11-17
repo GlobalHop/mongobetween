@@ -12,6 +12,12 @@ PROJECT=mongobetween-test
 docker compose -p "$PROJECT" up -d --wait mongo1 mongo2 mongo3 rs1 rs2 rs3
 docker compose -p "$PROJECT" run --rm rs-init
 
+# Create and warm the host module cache before mounting it. If the directory is missing, Docker creates it
+# root-owned and the container (running as the host uid) cannot write to it.
+GOMODCACHE_DIR="$(go env GOMODCACHE)"
+mkdir -p "$GOMODCACHE_DIR"
+go mod download
+
 # ARGS is intentionally unquoted so it word-splits into go test flags.
 docker run --rm --network "${PROJECT}_default" \
   --user "$(id -u):$(id -g)" \
@@ -20,6 +26,6 @@ docker run --rm --network "${PROJECT}_default" \
   -e CI=true \
   -e "MONGOBETWEEN_RS_URI=mongodb://rs1:27017,rs2:27017,rs3:27017/?replicaSet=rs0" \
   -v "$PWD":/src:ro \
-  -v "$(go env GOMODCACHE)":/go/pkg/mod \
+  -v "$GOMODCACHE_DIR":/go/pkg/mod \
   -e "ARGS=${ARGS:-}" \
   golang:1.27 sh -c 'cp -r /src /tmp/work && cd /tmp/work && go test -count 1 -race ./... $ARGS'

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/xdg-go/scram"
@@ -52,7 +53,7 @@ type Users struct {
 // allowed; duplicate usernames rejected) and derives SCRAM-SHA-256 credentials with a random salt per user.
 // Errors never contain passwords.
 func LoadUsers(path string) (*Users, error) {
-	f, err := os.Open(path) //nolint:gosec // operator supplied path
+	f, err := os.Open(filepath.Clean(path)) // #nosec G304 -- path comes from an operator-supplied CLI flag
 	if err != nil {
 		return nil, fmt.Errorf("opening auth users file: %w", err)
 	}
