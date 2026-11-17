@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mongobetween Branch Changes</title>
+<meta name="description" content="Every change on feature/rs-connection-pool (GlobalHop/mongobetween) that turns mongobetween into a connection-pool proxy for PHP in front of an unsharded MongoDB Atlas replica set, with the reason for each change.">
+<style>
+:root {
+  --bg: #fbfaf7;
+  --surface: #ffffff;
+  --surface-2: #f3f1ec;
+  --text: #1d1d1b;
+  --muted: #5d5b55;
+  --border: #e2ded5;
+  --accent: #1f6f5c;
+  --accent-soft: #e3f1ec;
+  --warn: #9a5b00;
+  --warn-soft: #fbf0dc;
+  --bad: #a3332b;
+  --bad-soft: #f9e4e1;
+  --code-bg: #f1eee7;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161614;
+    --surface: #1f1f1c;
+    --surface-2: #262622;
+    --text: #ebe8e1;
+    --muted: #a8a49a;
+    --border: #36352f;
+    --accent: #6cc4a9;
+    --accent-soft: #1d3a32;
+    --warn: #e2a64a;
+    --warn-soft: #3a2e1a;
+    --bad: #ec8b81;
+    --bad-soft: #3d2220;
+    --code-bg: #2a2925;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161614;
+  --surface: #1f1f1c;
+  --surface-2: #262622;
+  --text: #ebe8e1;
+  --muted: #a8a49a;
+  --border: #36352f;
+  --accent: #6cc4a9;
+  --accent-soft: #1d3a32;
+  --warn: #e2a64a;
+  --warn-soft: #3a2e1a;
+  --bad: #ec8b81;
+  --bad-soft: #3d2220;
+  --code-bg: #2a2925;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 var(--sans);
+}
+.wrap { max-width: 980px; margin: 0 auto; padding: 32px 16px 80px; }
+header.top { border-bottom: 1px solid var(--border); padding-bottom: 20px; margin-bottom: 28px; }
+h1 { font-size: 2rem; line-height: 1.2; margin: 0 0 8px; letter-spacing: -0.01em; }
+h2 { font-size: 1.4rem; margin: 48px 0 12px; padding-top: 8px; border-top: 1px solid var(--border); }
+h3 { font-size: 1.1rem; margin: 0 0 6px; }
+h4 { font-size: 0.95rem; margin: 16px 0 4px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+p { margin: 0 0 12px; }
+a { color: var(--accent); }
+.lede { color: var(--muted); font-size: 1.05rem; max-width: 70ch; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 0.9rem; color: var(--muted); margin-top: 14px; }
+.meta b { color: var(--text); font-weight: 600; }
+code, pre, kbd { font-family: var(--mono); font-size: 0.87em; }
+code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+pre { background: var(--code-bg); padding: 12px 14px; border-radius: 8px; overflow-x: auto; line-height: 1.45; margin: 8px 0 14px; }
+pre code { background: none; padding: 0; }
+nav.toc { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; }
+nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+nav.toc li { break-inside: avoid; margin: 2px 0; }
+@media (max-width: 640px) { nav.toc ol { columns: 1; } }
+.callout { border-left: 4px solid var(--accent); background: var(--accent-soft); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 14px 0; }
+.callout.warn { border-color: var(--warn); background: var(--warn-soft); }
+.callout.bad { border-color: var(--bad); background: var(--bad-soft); }
+.callout p:last-child, .callout ul:last-child { margin-bottom: 0; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 18px 20px; margin: 16px 0; }
+.card .tag { display: inline-block; font-size: 0.75rem; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: var(--surface-2); color: var(--muted); margin-right: 6px; }
+.card .why { border-left: 3px solid var(--warn); padding-left: 12px; margin: 10px 0; }
+.card ul { margin: 6px 0 10px; padding-left: 20px; }
+.card li { margin: 3px 0; }
+.refs { font-size: 0.85rem; color: var(--muted); margin-top: 8px; }
+.refs code { font-size: 0.82rem; }
+.table-wrap { overflow-x: auto; margin: 10px 0 16px; border: 1px solid var(--border); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; background: var(--surface); }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--surface-2); font-weight: 600; white-space: nowrap; }
+tr:last-child td { border-bottom: none; }
+td.nowrap { white-space: nowrap; }
+.flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px; margin: 14px 0; }
+.flow .box { flex: 1 1 200px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 0.9rem; }
+.flow .box b { display: block; margin-bottom: 4px; }
+.flow .arrow { align-self: center; color: var(--muted); font-size: 1.2rem; }
+@media (max-width: 640px) { .flow .arrow { transform: rotate(90deg); width: 100%; text-align: center; } }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+.pill-ok { color: var(--accent); font-weight: 600; }
+.pill-no { color: var(--bad); font-weight: 600; }
+.pill-part { color: var(--warn); font-weight: 600; }
+details { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin: 10px 0; }
+summary { cursor: pointer; font-weight: 600; }
+footer { margin-top: 56px; font-size: 0.85rem; color: var(--muted); border-top: 1px solid var(--border); padding-top: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <h1>mongobetween: replica-set connection-pool proxy</h1>
+  <p class="lede">This page lists every change on branch <code>feature/rs-connection-pool</code> and why it was made. The changes make mongobetween work as a real connection-pool proxy between PHP (ext-mongodb / libmongoc) and an <b>unsharded MongoDB Atlas replica set</b>. It is written for engineers and for AI agents that continue this work, so it gives context, invariants and pointers, not only a list.</p>
+  <div class="meta">
+    <span><b>Repo</b> GlobalHop/mongobetween (fork of coinbase/mongobetween)</span>
+    <span><b>Branch</b> <code>feature/rs-connection-pool</code></span>
+    <span><b>Base</b> <code>master</code> = upstream <code>ea5a87e</code></span>
+    <span><b>Range</b> <code>c9f11cd..430d3f1</code> (53 commits)</span>
+    <span><b>Size</b> 63 files, +7884 / −570</span>
+    <span><b>Written</b> 2026-11-17</span>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <ol>
+    <li><a href="#summary">Summary</a></li>
+    <li><a href="#background">Background: why change anything</a></li>
+    <li><a href="#design">How the proxy works now</a></li>
+    <li><a href="#changes">Changes by area</a></li>
+    <li><a href="#flags">New and changed CLI flags</a></li>
+    <li><a href="#errors">Error replies the client can see</a></li>
+    <li><a href="#php">PHP client URI rules</a></li>
+    <li><a href="#verification">Verification evidence</a></li>
+    <li><a href="#limits">Known limitations and open items</a></li>
+    <li><a href="#agents">Notes for AI agents</a></li>
+    <li><a href="#commits">Full commit list</a></li>
+    <li><a href="#manifest">Machine-readable manifest</a></li>
+  </ol>
+</nav>
+
+<!-- ============================================================ -->
+<h2 id="summary">1. Summary</h2>
+
+<p><b>Starting point.</b> Upstream mongobetween was designed to sit in front of <code>mongos</code> routers of a sharded cluster. A test about a year earlier, with PHP against an unsharded Atlas replica set, failed. Upstream has had almost no maintenance since 2024. Its own README says direct replica-set use "hasn't been battle tested".</p>
+
+<p><b>Result.</b> The branch keeps the core design: the proxy impersonates a <code>mongos</code> and forwards wire messages byte for byte through a Go driver connection pool. It fixes or adds everything that design needs to work for PHP against a replica set:</p>
+<ul>
+  <li>Correct handshake: <code>hello</code> and <code>isMaster</code> are answered locally, in the request's opcode, with the real upstream wire version.</li>
+  <li>MongoDB error replies with retry labels instead of closed sockets, so libmongoc retries during failovers.</li>
+  <li>Client read preference honoured (mode, tags, <code>maxStalenessSeconds</code>). Writes always go to the primary.</li>
+  <li>Cursor and transaction pinning bugs fixed.</li>
+  <li>Optional inbound TLS / mTLS and SCRAM-SHA-256 proxy users that are separate from the Atlas user.</li>
+  <li>Upstream TLS can be enforced. Pre-authentication limits, connection limits, bounded shutdown.</li>
+  <li>Modern Go driver (v1.17.10), patched dependencies, distroless image, Docker test harness with a replica set, PHP smoke test, new CI.</li>
+</ul>
+
+<div class="callout">
+  <p><b>Verified on Atlas</b> MongoDB 8.0.37 and 9.0.7 from PHP: connection, CRUD, aggregations, transactions, read preferences and error codes. Results through the proxy match a direct connection, except for two intended differences (handshake persona, code 133). Two Atlas "Test Failover" runs showed no application-visible errors apart from one lost cursor, which now gets the real code 91 instead of a generic one.</p>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="background">2. Background: why change anything</h2>
+
+<p>The analysis of upstream (see <code>.claude/knowledge/01..06</code>) found these problems for our setup:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Problem in upstream</th><th>Effect on PHP + Atlas replica set</th></tr></thead>
+<tbody>
+<tr><td>Fake <code>isMaster</code> reply hard-codes <code>maxWireVersion: 8</code></td><td>Newer libmongoc requires a higher minimum wire version and refuses the server. Newer server features stay disabled.</td></tr>
+<tr><td><code>hello</code> not intercepted; reply always in OP_REPLY</td><td>Stable API (<code>serverApi</code>) clients and OP_MSG handshakes can see the real topology or get a malformed reply.</td></tr>
+<tr><td>Any proxy-side error closes the client socket</td><td>During an Atlas election PHP sees a network error, not a retryable server error. Drivers mark the proxy Unknown (upstream issue #16).</td></tr>
+<tr><td>Server selection hard-coded to primary, <code>$readPreference</code> ignored</td><td>No secondary or analytics-node offload. Open upstream PRs (#31, #88, #92) never merged.</td></tr>
+<tr><td>Cursor pins keyed by cursor id only; <code>killCursors</code> does not evict</td><td>Wrong server for a <code>getMore</code> after id collisions; memory grows.</td></tr>
+<tr><td>Transaction pin reused after a transaction ends</td><td>A new transaction on the same session can go to a stale (former primary) server after an election.</td></tr>
+<tr><td>No frame size limit, no deadlines, no inbound auth, no listener TLS</td><td>A malformed or hostile client can allocate about 2 GB. Anyone who reaches the port has the Atlas user's rights.</td></tr>
+<tr><td>Shutdown waits forever for clients</td><td>PHP persistent connections block pod shutdown until SIGKILL.</td></tr>
+<tr><td>Go driver v1.14, Go 1.18, old dependencies with CVEs, tests only against standalones</td><td>Atlas 8.0+ unsupported by the driver; replica-set behaviour never tested.</td></tr>
+</tbody>
+</table></div>
+
+<p>An Atlas user who gave the app's Atlas URI (<code>mongodb+srv</code>, credentials, <code>replicaSet</code>) to PHP and pointed it at the proxy would also fail. This was the most probable cause of the earlier failed test (it matches upstream issue #30). The runbook now documents the correct PHP URI.</p>
+
+<!-- ============================================================ -->
+<h2 id="design">3. How the proxy works now</h2>
+
+<div class="flow" role="img" aria-label="Request flow: PHP app to mongobetween to Go driver pool to Atlas replica set">
+  <div class="box"><b>PHP app</b>ext-mongodb / libmongoc. URI <code>mongodb://proxy:port</code>, optional TLS and proxy user.</div>
+  <div class="arrow">→</div>
+  <div class="box"><b>mongobetween listener</b>Optional TLS/mTLS. Optional SCRAM-SHA-256 against proxy users. Handshake answered locally as <code>isdbgrid</code> (mongos).</div>
+  <div class="arrow">→</div>
+  <div class="box"><b>Routing</b>Pick a server: transaction pin, then cursor pin, then client <code>$readPreference</code>, then primary. Writes always primary.</div>
+  <div class="arrow">→</div>
+  <div class="box"><b>Go driver v1.17.10 pool</b>One checkout per message. Raw bytes forwarded. TLS + SCRAM to Atlas with the Atlas user.</div>
+  <div class="arrow">→</div>
+  <div class="box"><b>Atlas replica set</b>The app never sees member hostnames. SDAM and failover happen inside the Go driver.</div>
+</div>
+
+<ul>
+  <li><b>Persona.</b> The proxy tells the client it is a <code>mongos</code> (<code>msg: "isdbgrid"</code>). libmongoc then sends <code>$readPreference</code> inside each command and accepts a single seed. That is why <code>replicaSet=</code> must not be in the PHP URI.</li>
+  <li><b>Wire version.</b> The handshake reply mirrors the upstream <code>maxWireVersion</code>, capped at 25 because driver v1.17.10 knows no higher value. MongoDB 9.0 reports wire 29, so PHP sees 25 through the proxy. Exposing 29 needs the Go driver v2 migration.</li>
+  <li><b>Absent fields on purpose.</b> The reply has no <code>helloOk</code>, <code>topologyVersion</code>, <code>compression</code>, <code>setName</code>, <code>hosts</code> or <code>speculativeAuthenticate</code>. This keeps clients on polling monitoring and uncompressed frames, which are the only modes the proxy supports.</li>
+  <li><b>Failures.</b> A proxy-side failure (selection timeout, checkout timeout, pool cleared) becomes a MongoDB error document with retry labels. The client socket stays open.</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="changes">4. Changes by area</h2>
+
+<p>Each card says what changed, why, and where to look. Commit hashes refer to this branch.</p>
+
+<div class="card" id="c-handshake">
+  <span class="tag">wire protocol</span><span class="tag">must-have</span>
+  <h3>4.1 Handshake: intercept <code>hello</code>, reply in request opcode, mirror wire version</h3>
+  <ul>
+    <li><code>hello</code> and <code>isMaster</code> (also legacy <code>ismaster</code>, also with a bool value) on <code>admin</code> are answered locally, in OP_MSG or OP_REPLY to match the request.</li>
+    <li><code>maxWireVersion</code> mirrors the upstream topology, capped at 25. Flag <code>-max-wire-version</code> overrides it (0 = mirror; an explicit value must be 0..25 or the proxy refuses to start).</li>
+    <li><code>saslSupportedMechs</code> is included only when inbound auth is on. <code>logicalSessionTimeoutMinutes</code> stays so sessions, retryable writes and transactions work.</li>
+    <li>Old <code>mongo/ismaster.go</code> replaced by <code>mongo/handshake.go</code>.</li>
+  </ul>
+  <div class="why"><b>Why:</b> the hard-coded wire version 8 would break any libmongoc that requires a higher minimum and hid server features. Stable API clients send <code>hello</code> in OP_MSG, which upstream did not intercept.</div>
+  <div class="refs">Commits <code>2473379</code>, <code>6f4fe6c</code> · Files <code>mongo/handshake.go</code>, <code>mongo/command.go</code>, <code>mongo/handshake_test.go</code> · Functions <code>BuildHandshakeResponse</code>, <code>ReportedMaxWireVersion</code></div>
+</div>
+
+<div class="card" id="c-errors">
+  <span class="tag">resilience</span><span class="tag">must-have</span>
+  <h3>4.2 MongoDB error replies instead of closed sockets</h3>
+  <ul>
+    <li>Proxy-side failures are classified by <code>ClassifyProxyError</code> and sent as a normal error document in the request's opcode (<code>ErrorResponse</code>).</li>
+    <li>Default: code 11602 InterruptedDueToReplStateChange. Labels depend on the request: <code>RetryableWriteError</code> outside a transaction, <code>TransientTransactionError</code> inside one, <code>RetryableWriteError</code> + <code>UnknownTransactionCommitResult</code> on <code>commitTransaction</code>.</li>
+    <li>Upstream state-change codes (91, 11600, 11602, 10107, 13435, 13436, 189) are forwarded with their real code and codeName. This includes the case where the Go driver wraps the cause in its unexported pool-cleared error; the code is parsed from that error's text.</li>
+    <li>Code 133 FailedToSatisfyReadPreference for a non-primary read preference that no member matches. On a stable replica set (a primary, no member in Unknown, RSMember or RSGhost state) it fails fast, as a <code>mongos</code> does, instead of waiting for the selection timeout.</li>
+    <li>Code 2 BadValue for an invalid <code>$readPreference</code>; code 13 when dynamic config disables writes; code 18 for auth commands when inbound auth is off.</li>
+    <li>Client-visible <code>errmsg</code> values are fixed strings prefixed <code>mongobetween: </code>. They never contain upstream hostnames or topology text. The full cause goes to the <code>Proxy error reply</code> log line and the <code>proxy_error_reply</code> counter.</li>
+    <li><code>-checkout-timeout</code> (default 10s) bounds the wait for an upstream connection.</li>
+  </ul>
+  <div class="why"><b>Why:</b> a closed socket makes libmongoc treat the proxy as a dead server. A retryable error code lets it retry reads and writes once during an Atlas election, which is how a real <code>mongos</code> behaves. Code 133 fail-fast was added after the Atlas test showed an unsatisfiable tag set waited 30 s and leaked member hostnames. State-code forwarding was added after the Atlas failover test showed a lost cursor reported as generic 11602 while Atlas had sent 91 ShutdownInProgress.</div>
+  <div class="refs">Commits <code>eb35d7b</code>, <code>0e760b7</code>, <code>1584a75</code>, <code>9327529</code>, <code>3d47f27</code>, <code>3137c2d</code>, <code>43c912e</code>, <code>bbaea44</code>, <code>75fb43a</code> · Files <code>mongo/errors.go</code>, <code>mongo/errors_test.go</code>, <code>mongo/mongo.go</code>, <code>proxy/connection.go</code></div>
+</div>
+
+<div class="card" id="c-frames">
+  <span class="tag">safety</span>
+  <h3>4.3 Frame limits and exhaust cursors</h3>
+  <ul>
+    <li>Client frames must be 16 B to 48 MB + 16 KiB. Bodies are read incrementally, so memory follows the bytes actually received.</li>
+    <li>A client that starts a TLS handshake on a plain-text port is detected and closed at once (log <code>TLS client on plain-text port</code>).</li>
+    <li>The <code>exhaustAllowed</code> flag is stripped from OP_MSG (<code>StripExhaustAllowed</code>). A reply with <code>moreToCome</code> never returns to the pool.</li>
+  </ul>
+  <div class="why"><b>Why:</b> upstream allocated whatever length a frame header claimed (up to about 2 GB) and panicked on negative lengths. Exhaust streams leave a connection in a state the pool cannot reuse.</div>
+  <div class="refs">Commits <code>b22b29d</code>, <code>c88e3e1</code> · Files <code>mongo/exhaust.go</code>, <code>proxy/connection.go</code>, <code>proxy/limits_test.go</code></div>
+</div>
+
+<div class="card" id="c-pinning">
+  <span class="tag">routing</span>
+  <h3>4.4 Cursor and transaction pinning</h3>
+  <ul>
+    <li>Cursor pins are keyed by cursor id <b>and</b> full namespace, the same on store and lookup. <code>killCursors</code> evicts the pin.</li>
+    <li>A transaction pin is used only for the transaction that created it. A new transaction (<code>startTransaction</code>) never reuses a stale pin. Pin precedence lives in <code>pinnedServer</code>.</li>
+  </ul>
+  <div class="why"><b>Why:</b> cursor ids are unique per server, not globally. After an Atlas election, a reused transaction pin would send the new transaction to the former primary.</div>
+  <div class="refs">Commits <code>6f0b37d</code>, <code>930de3a</code>, <code>61e4e29</code>, <code>c37b237</code> · Files <code>mongo/cursor_cache.go</code>, <code>mongo/pinning.go</code>, <code>mongo/mongo.go</code></div>
+</div>
+
+<div class="card" id="c-readpref">
+  <span class="tag">routing</span><span class="tag">from a fork</span>
+  <h3>4.5 Client read preference</h3>
+  <ul>
+    <li>Base taken from the crowdsecurity fork's <code>readpref</code> branch (commit <code>7272f94</code>, author kept). It extracts <code>$readPreference</code> from wire messages and builds a selector.</li>
+    <li>Extended to tags and <code>maxStalenessSeconds</code>. Default is primary when absent, not a document, or unknown mode.</li>
+    <li>A present but invalid read preference gets code 2 BadValue.</li>
+    <li>Write commands (<code>IsWrite</code>) always select the primary, whatever <code>$readPreference</code> they carry, as a real <code>mongos</code> does.</li>
+  </ul>
+  <div class="why"><b>Why:</b> to allow secondary and analytics-node offload. libmongoc sends <code>$readPreference</code> to a <code>mongos</code>, so the proxy must act on it or it is silently ignored. Reusing an existing fork avoided writing the parser from zero.</div>
+  <div class="refs">Commits <code>7272f94</code>, <code>f5b41b9</code>, <code>cdb64c5</code> · Files <code>mongo/operations.go</code>, <code>mongo/mongo.go</code>, <code>mongo/readpref_test.go</code></div>
+</div>
+
+<div class="card" id="c-lifecycle">
+  <span class="tag">operations</span>
+  <h3>4.6 Shutdown, cancellation and upstream TLS enforcement</h3>
+  <ul>
+    <li><code>-shutdown-timeout</code> (default 30s): on SIGTERM/SIGINT the proxy stops accepting, waits for clients, then force closes them and aborts their in-flight upstream requests (<code>Mongo.CancelInFlight</code>).</li>
+    <li>A second signal does the same at once, then exits with status 1 after 2 s if still running.</li>
+    <li><code>-require-upstream-tls</code>: refuse to start unless every upstream URI uses TLS with certificate verification. <code>tlsInsecure=true</code> is rejected.</li>
+    <li>Upstream clients are closed on exit.</li>
+  </ul>
+  <div class="why"><b>Why:</b> PHP persistent connections never close by themselves, so upstream shutdown hung until SIGKILL. TLS to Atlas is a hard requirement; the flag guards against a mistyped URI.</div>
+  <div class="refs">Commits <code>d3ccb8b</code>, <code>50bfb21</code>, <code>08bc400</code> · Files <code>mongobetween.go</code>, <code>proxy/proxy.go</code>, <code>config/config.go</code>, <code>mongo/cancel_test.go</code></div>
+</div>
+
+<div class="card" id="c-tls">
+  <span class="tag">security</span><span class="tag">optional</span>
+  <h3>4.7 Optional TLS on the client listener</h3>
+  <ul>
+    <li><code>-tls-cert-file</code> + <code>-tls-key-file</code> turn on TLS. <code>-tls-ca-file</code> additionally requires and verifies client certificates (mTLS).</li>
+    <li>Paths are cleaned with <code>filepath.Clean</code>; the gosec G304 finding is justified with a <code>#nosec</code> comment because the paths come from operator flags.</li>
+  </ul>
+  <div class="why"><b>Why:</b> the proxy runs on a local network, so TLS is optional there, but the user asked for it to be available.</div>
+  <div class="refs">Commits <code>9e52db1</code>, <code>6d19397</code> · Files <code>proxy/tls.go</code>, <code>proxy/tls_test.go</code></div>
+</div>
+
+<div class="card" id="c-auth">
+  <span class="tag">security</span><span class="tag">optional</span>
+  <h3>4.8 Inbound SCRAM-SHA-256 with proxy-only users, and pre-auth hardening</h3>
+  <ul>
+    <li><code>-auth-users-file</code>: one <code>user:password</code> per line. These users exist only in the proxy and must differ from the Atlas user. Server side of SCRAM uses <code>xdg-go/scram</code>.</li>
+    <li>Unknown users get decoy credentials, so a client cannot tell a wrong user from a wrong password.</li>
+    <li>The salt is sent as 28 raw bytes. A base64 salt worked with the Go driver but libmongoc rejected it (found on Atlas test).</li>
+    <li>Before authentication only the handshake, <code>saslStart</code>/<code>saslContinue</code>, <code>ping</code>, <code>buildInfo</code> and <code>endSessions</code> are allowed; everything else gets code 13. No client bytes are forwarded before auth: <code>ping</code>/<code>endSessions</code>/<code>logout</code> are answered locally, <code>buildInfo</code> uses a body the proxy builds.</li>
+    <li>Unauthenticated frames are capped at 64 KiB. <code>-auth-timeout</code> (30s) closes an idle unauthenticated connection; the timer restarts per message so monitoring connections survive.</li>
+    <li><code>-max-connections</code> caps open client connections per listener (counter <code>connection_rejected</code>).</li>
+    <li>Pre-auth requests are tagged <code>command:unauthenticated</code> in statsd so clients cannot create tag values.</li>
+    <li>SCRAM input is validated; a short proof no longer panics.</li>
+  </ul>
+  <div class="why"><b>Why:</b> upstream had no inbound auth (maintainers suggested network isolation), so anyone reaching the port had the Atlas user's rights. The user required local credentials that do not match Atlas. Forwarding pre-auth bytes would let an unauthenticated client use the upstream connection.</div>
+  <div class="refs">Commits <code>3218ca2</code>, <code>0126dbf</code>, <code>9c23f88</code>, <code>ecc43f9</code>, <code>d160048</code>, <code>de0e471</code>, <code>6e9c349</code>, <code>9327529</code> · Files <code>proxy/auth.go</code>, <code>proxy/auth_test.go</code>, <code>proxy/preauth_test.go</code>, <code>proxy/connection.go</code></div>
+</div>
+
+<div class="card" id="c-dynamic">
+  <span class="tag">bug fix</span>
+  <h3>4.9 Dynamic config poller</h3>
+  <ul>
+    <li>The poller can be stopped, and go-getter calls are serialized. <code>Close</code> cancels an in-flight fetch instead of hanging.</li>
+  </ul>
+  <div class="why"><b>Why:</b> the race detector found a data race in go-getter, and <code>Close</code> could hang on a slow fetch.</div>
+  <div class="refs">Commits <code>3576989</code>, <code>8dc05f8</code> · Files <code>proxy/dynamic.go</code>, <code>proxy/dynamic_test.go</code></div>
+</div>
+
+<div class="card" id="c-metrics">
+  <span class="tag">observability</span>
+  <h3>4.10 Metrics and logs</h3>
+  <ul>
+    <li>Cluster tag on pool metrics when the URI has <code>label=</code> (cherry-picked upstream branch commit <code>b883655</code>, author kept).</li>
+    <li>New counter <code>proxy_error_reply</code> (tags <code>code</code>, <code>command</code>) and log line <code>Proxy error reply</code>.</li>
+    <li>New counter <code>connection_rejected</code> (tag <code>reason:max_connections</code>).</li>
+  </ul>
+  <div class="why"><b>Why:</b> error replies are <code>success:true</code> in <code>handle_message</code>, so they were invisible without a separate counter.</div>
+  <div class="refs">Commits <code>b883655</code>, <code>0e760b7</code>, <code>de0e471</code></div>
+</div>
+
+<div class="card" id="c-deps">
+  <span class="tag">build</span>
+  <h3>4.11 Driver, Go version, image and dependencies</h3>
+  <ul>
+    <li><code>go.mongodb.org/mongo-driver</code> v1.14.0 → <b>v1.17.10</b> (last v1). Supports Atlas 8.0+.</li>
+    <li><code>go</code> directive 1.18 → <b>1.26.0</b> (required by upgraded dependencies). Build image <code>golang:1.27</code>, CI Go 1.27.</li>
+    <li>Runtime image <code>scratch</code> → <code>gcr.io/distroless/static-debian12:nonroot</code> (non-root, has <code>/tmp</code>, CA certificates). Static, trimmed build. <code>.dockerignore</code> added.</li>
+    <li>go-getter → 1.8.10, <code>golang.org/x/crypto</code> → 0.59, grpc → 1.85, <code>yaml.v3</code> → 3.0.1 and other transitive upgrades, to clear known CVEs.</li>
+    <li><code>xdg-go/scram</code> is now a direct dependency (inbound auth).</li>
+  </ul>
+  <div class="why"><b>Why:</b> driver v1.14 does not officially support Atlas 8.0. Security scanners reported several critical CVEs in go-getter and x/crypto. The old image ran as root and had no <code>/tmp</code>, so <code>-dynamic</code> failed.</div>
+  <div class="callout warn"><p><b>Do not bump the driver casually.</b> <code>TestDriverVersionPinned</code> in <code>mongo/errors_test.go</code> fails if the driver version changes, because state-code forwarding parses the text of the driver's pool-cleared error (the type is unexported and has no <code>Unwrap</code>). On a bump, re-check the format string in the driver's <code>x/mongo/driver/topology/pool.go</code>.</p></div>
+  <div class="refs">Commits <code>3e3ea57</code>, <code>9b11116</code>, <code>e804464</code> · Files <code>go.mod</code>, <code>go.sum</code>, <code>Dockerfile</code>, <code>.dockerignore</code></div>
+</div>
+
+<div class="card" id="c-tests">
+  <span class="tag">tests</span>
+  <h3>4.12 Test harness</h3>
+  <ul>
+    <li><code>make test-docker</code> runs the full suite with <code>-race</code> inside Docker (compose project <code>mongobetween-test</code>): a 3-member replica set plus standalones, MongoDB 8.0. No host ports are published, and the tests never touch a MongoDB on the host's 27017.</li>
+    <li>Tests that need a database run only when <code>CI=true</code> (set by the harness); <code>make test-unit</code> unsets it.</li>
+    <li>Replica-set integration tests: failover with a verified stepdown, read preference routing, cursors across failover.</li>
+    <li><code>make php-smoke</code>: PHP with ext-mongodb 2.3.3 runs 9 checks through the proxy (auth, TLS, CRUD, transactions, read preference).</li>
+    <li>The script creates and warms <code>GOMODCACHE</code> before mounting it and runs as the host user.</li>
+  </ul>
+  <div class="why"><b>Why:</b> upstream tested only against three standalone <code>mongo:5.0</code> containers, so replica sets, <code>hello</code>, auth, TLS and libmongoc were never covered.</div>
+  <div class="refs">Commits <code>e17c732</code>, <code>c31441b</code>, <code>b76d1c5</code>, <code>cd3f860</code>, <code>54f78de</code>, <code>86aba0c</code>, <code>18282f0</code> · Files <code>docker-compose.yml</code>, <code>scripts/test-docker.sh</code>, <code>scripts/php-smoke.sh</code>, <code>test/php/*</code>, <code>proxy/rs_test.go</code>, <code>Makefile</code></div>
+</div>
+
+<div class="card" id="c-ci">
+  <span class="tag">CI</span>
+  <h3>4.13 GitHub Actions</h3>
+  <ul>
+    <li>Jobs: <code>tests</code> (<code>make test-docker</code>), <code>lint</code> (golangci-lint v2.15.0, config migrated to v2), <code>gosec</code> v2.30.0 (<code>-exclude=G115</code>), <code>govulncheck</code> v1.1.0, <code>trufflehog</code> v3.99.9.</li>
+    <li>Salus removed: its bundled tools could not parse the <code>go 1.26.0</code> directive.</li>
+    <li>Actions bumped to Node 24 majors (<code>checkout@v7</code>, <code>setup-go@v7</code>, <code>golangci-lint-action@v9</code>). Unused <code>checks: write</code> permission removed.</li>
+  </ul>
+  <div class="why"><b>Why:</b> the first CI run on the fork failed (module cache permission denied, gosec G304, Salus parse error). G115 (integer conversion) is excluded because the flagged conversions are bounded wire-protocol lengths; a per-site <code>#nosec</code> is an open alternative.</div>
+  <div class="refs">Commits <code>f527cfa</code>, <code>fb37dd5</code>, <code>6d19397</code>, <code>430d3f1</code> · Files <code>.github/workflows/workflow.yaml</code>, <code>.golangci.yml</code></div>
+</div>
+
+<div class="card" id="c-docs">
+  <span class="tag">docs</span>
+  <h3>4.14 Documentation and knowledge base</h3>
+  <ul>
+    <li><code>.claude/knowledge/</code>: analysis of upstream (01–06), change backlog with status (07), deferred review findings (08).</li>
+    <li><code>docs/superpowers/plans/2026-11-16-rs-connection-pool-proxy.md</code>: the 14-task implementation plan.</li>
+    <li><code>docs/atlas-poc.md</code>: Atlas runbook (start command, PHP URI rules, users file, failover procedure, error table, metrics, sizing).</li>
+    <li><code>README.md</code>: replica-set usage and new flags.</li>
+  </ul>
+  <div class="refs">Commits <code>c9f11cd</code>, <code>7fa5a71</code>, <code>16c8717</code>, <code>dcdd940</code>, <code>3137c2d</code></div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="flags">5. New and changed CLI flags</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Flag</th><th>Default</th><th>Purpose</th></tr></thead>
+<tbody>
+<tr><td><code>-max-wire-version</code></td><td>0</td><td>Wire version in handshake replies. 0 mirrors upstream (capped 25); explicit 0..25.</td></tr>
+<tr><td><code>-checkout-timeout</code></td><td>10s</td><td>Max wait for an upstream connection; on expiry the client gets an error reply.</td></tr>
+<tr><td><code>-shutdown-timeout</code></td><td>30s</td><td>Drain time on SIGTERM/SIGINT before force close.</td></tr>
+<tr><td><code>-require-upstream-tls</code></td><td>false</td><td>Refuse to start unless all upstreams use verified TLS.</td></tr>
+<tr><td><code>-tls-cert-file</code>, <code>-tls-key-file</code></td><td>empty</td><td>Enable TLS on the client listener.</td></tr>
+<tr><td><code>-tls-ca-file</code></td><td>empty</td><td>Require and verify client certificates (mTLS).</td></tr>
+<tr><td><code>-auth-users-file</code></td><td>empty</td><td>Enable inbound SCRAM-SHA-256 with proxy-only users.</td></tr>
+<tr><td><code>-auth-timeout</code></td><td>30s</td><td>Close idle unauthenticated connections (only with auth on).</td></tr>
+<tr><td><code>-max-connections</code></td><td>0</td><td>Cap open client connections per listener (0 = unlimited).</td></tr>
+</tbody>
+</table></div>
+<p>Unchanged flags: <code>-network</code>, <code>-username</code>, <code>-password</code>, <code>-statsd</code>, <code>-unlink</code>, <code>-ping</code>, <code>-pretty</code>, <code>-loglevel</code>, <code>-dynamic</code>, <code>-enable-sdam-metrics</code>, <code>-enable-sdam-logging</code>. <code>${VAR}</code> in arguments is expanded by the proxy, so put the Atlas URI in an environment variable and never on the command line.</p>
+
+<!-- ============================================================ -->
+<h2 id="errors">6. Error replies the client can see</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Code</th><th>Name</th><th>When</th><th>Labels</th></tr></thead>
+<tbody>
+<tr><td>91, 11600, 11602, 10107, 13435, 13436, 189</td><td>upstream's own codeName</td><td>Upstream reported a state change (also when wrapped in a pool-cleared error)</td><td>by request type (see 11602)</td></tr>
+<tr><td>11602</td><td>InterruptedDueToReplStateChange</td><td>Selection or checkout timeout for primary requests, cancellation, other upstream errors</td><td><code>RetryableWriteError</code>; in a transaction <code>TransientTransactionError</code>; on commit <code>RetryableWriteError</code> + <code>UnknownTransactionCommitResult</code></td></tr>
+<tr><td>133</td><td>FailedToSatisfyReadPreference</td><td>Non-primary read preference no member matches</td><td>none</td></tr>
+<tr><td>13</td><td>Unauthorized</td><td>Writes disabled by dynamic config; command before authentication</td><td>none</td></tr>
+<tr><td>18</td><td>AuthenticationFailed</td><td>Bad proxy credentials; auth command while inbound auth is off</td><td>none</td></tr>
+<tr><td>2</td><td>BadValue</td><td>Invalid <code>$readPreference</code></td><td>none</td></tr>
+</tbody>
+</table></div>
+<p>Every other server error (for example an Atlas authorization error such as <code>not authorized ... collMod</code>) is forwarded unchanged. It does not come from the proxy and does not appear in <code>proxy_error_reply</code>.</p>
+
+<!-- ============================================================ -->
+<h2 id="php">7. PHP client URI rules</h2>
+<p>PHP must connect to the proxy with <code>mongodb://&lt;proxy-host&gt;:&lt;port&gt;</code>, not with the Atlas URI.</p>
+<div class="grid2">
+  <div class="callout">
+    <p><b>Allowed</b></p>
+    <ul>
+      <li>Proxy user and password (only with <code>-auth-users-file</code>)</li>
+      <li><code>tls=true</code> + <code>tlsCAFile</code> (only with listener TLS)</li>
+      <li><code>readPreference</code>, tags, <code>maxStalenessSeconds</code></li>
+      <li><code>retryWrites</code>, <code>retryReads</code>, sessions, transactions</li>
+      <li><code>serverApi</code></li>
+    </ul>
+  </div>
+  <div class="callout bad">
+    <p><b>Do not use</b></p>
+    <ul>
+      <li><code>mongodb+srv://</code></li>
+      <li><code>replicaSet=</code> (libmongoc drops a mongos from an RS topology)</li>
+      <li><code>loadBalanced=true</code></li>
+      <li>Atlas credentials</li>
+      <li><code>tls=true</code> on a plain listener</li>
+    </ul>
+  </div>
+</div>
+<p>From another Docker container, use the proxy container's name or network alias, not <code>localhost</code>. The local test setup attaches the proxy container to the shared Docker network with alias <code>mongobetween</code>, so apps use <code>mongodb://mongobetween:27012</code>.</p>
+
+<!-- ============================================================ -->
+<h2 id="verification">8. Verification evidence</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Check</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td><code>make test-docker</code> (full suite, <code>-race</code>, replica set)</td><td class="pill-ok">pass</td></tr>
+<tr><td><code>make php-smoke</code> (ext-mongodb 2.3.3)</td><td class="pill-ok">9/9</td></tr>
+<tr><td>golangci-lint v2.15.0, <code>go vet</code>, <code>gofmt</code></td><td class="pill-ok">clean</td></tr>
+<tr><td>gosec, govulncheck, trufflehog in CI</td><td class="pill-ok">pass</td></tr>
+<tr><td>Atlas 8.0.37: PHP suite direct vs through proxy (connection, CRUD, errors, aggregations, transactions, read preference)</td><td class="pill-ok">same results, except persona and code 133 (intended)</td></tr>
+<tr><td>Atlas 9.0.7: same suite</td><td class="pill-ok">same results; PHP sees wire 25 (cap)</td></tr>
+<tr><td>Atlas "Test Failover" with a write/read loop (2 runs)</td><td class="pill-ok">0 app-visible errors except a lost cursor, now answered with 91; all acknowledged writes present</td></tr>
+<tr><td>Latency overhead through the proxy (Atlas)</td><td class="pill-ok">negligible</td></tr>
+</tbody>
+</table></div>
+<p>Process: the work followed the 14-task plan. Each task was implemented by a subagent, reviewed for spec compliance and quality, and fixed in review loops. A final whole-branch review produced one fix wave (<code>c88e3e1..16c8717</code>). Atlas findings were fixed afterwards (<code>9c23f88</code>, <code>3d47f27</code>, <code>43c912e</code>, <code>bbaea44</code>).</p>
+<p>Atlas test data used prefixed collections that the suite drops afterwards. The test user had read/write rights only, so it could not drop databases or run <code>collMod</code> (Doctrine ODM <code>schema:update</code> validators need <code>dbAdmin</code>, or <code>--disable-validators</code>).</p>
+
+<!-- ============================================================ -->
+<h2 id="limits">9. Known limitations and open items</h2>
+<ul>
+  <li><b>Go driver v2 migration</b> not done. Needed to report wire versions above 25 (MongoDB 9.0 = 29). Requires re-checking the pool-cleared error parsing.</li>
+  <li>Inbound auth is SCRAM-SHA-256 only. All proxy users share the Atlas user's privileges (no per-user rights).</li>
+  <li>No <code>speculativeAuthenticate</code> (one extra round trip per new client connection).</li>
+  <li>No idle/read deadline on authenticated client sockets.</li>
+  <li>Exhaust cursors and <code>OP_COMPRESSED</code> unsupported by design.</li>
+  <li><code>IsWrite</code> completeness for <code>DisableWrites</code>, legacy OP_UPDATE/OP_DELETE bugs, replacing go-getter: not done.</li>
+  <li>Sharded persona not tested by the new harness.</li>
+  <li>Rare shutdown race: a request arriving just after Kill may hang until SIGKILL; the second signal covers it.</li>
+  <li>Open decisions: G115 per-site <code>#nosec</code> instead of a global exclude.</li>
+</ul>
+<p>The full raw list of deferred minor findings is in <code>.claude/knowledge/08-open-follow-ups.md</code>.</p>
+
+<!-- ============================================================ -->
+<h2 id="agents">10. Notes for AI agents</h2>
+<p>Read this before changing the code.</p>
+
+<h4>Where to start</h4>
+<ul>
+  <li><code>.claude/knowledge/README.md</code> then <code>05-sharded-vs-unsharded.md</code> and <code>07-change-backlog.md</code>. Files 01–04 and 06 describe upstream <b>before</b> this branch unless marked.</li>
+  <li><code>docs/atlas-poc.md</code> for operational behaviour and the error table.</li>
+  <li>Request path: <code>proxy/connection.go</code> (read, auth gate, dispatch) → <code>mongo/command.go</code> / <code>mongo/operations.go</code> (decode) → <code>mongo/mongo.go</code> <code>RoundTrip</code> (select, pin, checkout, forward) → <code>mongo/errors.go</code> (error replies).</li>
+</ul>
+
+<h4>Invariants that must hold</h4>
+<ul>
+  <li>The handshake reply must not contain <code>helloOk</code>, <code>topologyVersion</code>, <code>compression</code>, <code>setName</code>, <code>hosts</code> or <code>speculativeAuthenticate</code>. Adding any of them switches clients to modes the proxy cannot handle.</li>
+  <li>Reported <code>maxWireVersion</code> must not exceed what the bundled driver supports (<code>topology.SupportedWireVersions.Max</code>).</li>
+  <li>Never send a reply with <code>moreToCome</code> back to the pool; keep stripping <code>exhaustAllowed</code>.</li>
+  <li>Client-visible error messages are fixed strings. Never put <code>err.Error()</code>, hostnames or topology text in a client reply; log them instead.</li>
+  <li>Before authentication, never forward client bytes upstream.</li>
+  <li>Write commands always go to the primary.</li>
+  <li>Cursor pin store and lookup must use the same (id, namespace) key.</li>
+  <li><code>TestDriverVersionPinned</code> guards the driver version; see 4.11.</li>
+</ul>
+
+<h4>Testing rules</h4>
+<ul>
+  <li>Run tests with <code>make test-docker</code> (needs Docker, e.g. Rancher Desktop). Clean up with <code>make test-docker-down</code>. <code>make test-unit</code> runs without a database.</li>
+  <li>Never point tests at a MongoDB on the host's 27017; the developer machine may run a real one.</li>
+  <li>For Atlas tests, use separate prefixed collections and drop them afterwards; do not rely on <code>dropDatabase</code>.</li>
+</ul>
+
+<h4>Secrets</h4>
+<ul>
+  <li>Never put a real connection string, password or token in code, commits, logs, docs or command lines. Pass the Atlas URI through an environment variable (<code>'${MONGO_URI}'</code>, single quoted, expanded by the proxy) or a 0600 env file.</li>
+  <li>The proxy users file holds clear-text passwords: mount it as a secret, mode 0600.</li>
+</ul>
+
+<h4>Useful commands</h4>
+<pre><code>make build            # bin/mongobetween
+make test-docker      # full suite with -race in Docker
+make test-unit        # no database
+make php-smoke        # PHP ext-mongodb checks through the proxy
+make lint             # golangci-lint v2
+docker build -t mongobetween:dev .
+
+# run against Atlas (URI in env, never in argv)
+mongobetween -require-upstream-tls -ping '127.0.0.1:27016=${MONGO_URI}'</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="commits">11. Full commit list</h2>
+<details>
+<summary>53 commits, oldest first</summary>
+<div class="table-wrap"><table>
+<thead><tr><th>Commit</th><th>Subject</th></tr></thead>
+<tbody>
+<tr><td class="nowrap"><code>c9f11cd</code></td><td>docs: add replica-set proxy knowledge base and implementation plan</td></tr>
+<tr><td class="nowrap"><code>e17c732</code></td><td>test: add docker-based test harness with replica set</td></tr>
+<tr><td class="nowrap"><code>3e3ea57</code></td><td>build: upgrade mongo-driver to v1.17.10, go 1.22, distroless image</td></tr>
+<tr><td class="nowrap"><code>c31441b</code></td><td>test: run harness as host user, add test-docker-down, fix vet warnings</td></tr>
+<tr><td class="nowrap"><code>f527cfa</code></td><td>ci: migrate golangci-lint to v2, drop ioutil</td></tr>
+<tr><td class="nowrap"><code>2473379</code></td><td>feat: intercept hello, reply in request opcode, mirror upstream wire version</td></tr>
+<tr><td class="nowrap"><code>eb35d7b</code></td><td>feat: return retryable MongoDB errors instead of closing client sockets</td></tr>
+<tr><td class="nowrap"><code>b22b29d</code></td><td>fix: bound client frame size and never let exhaust replies reach the pool</td></tr>
+<tr><td class="nowrap"><code>6f0b37d</code></td><td>fix: key cursor pins by full namespace and evict on killCursors</td></tr>
+<tr><td class="nowrap"><code>930de3a</code></td><td>test: cover cursor pin/lookup namespace symmetry and eviction</td></tr>
+<tr><td class="nowrap"><code>61e4e29</code></td><td>test: assert killCursors evicts each case's own namespace pin</td></tr>
+<tr><td class="nowrap"><code>c37b237</code></td><td>fix: never reuse a stale transaction pin for a new transaction</td></tr>
+<tr><td class="nowrap"><code>7272f94</code></td><td>feat: Add MongoDB read preference support (from crowdsecurity fork)</td></tr>
+<tr><td class="nowrap"><code>f5b41b9</code></td><td>feat: honour client read preference incl. tags and maxStalenessSeconds</td></tr>
+<tr><td class="nowrap"><code>b883655</code></td><td>chore: Add cluster tag on pool metrics when available (from upstream branch)</td></tr>
+<tr><td class="nowrap"><code>d3ccb8b</code></td><td>feat: bounded graceful shutdown and upstream TLS enforcement</td></tr>
+<tr><td class="nowrap"><code>9e52db1</code></td><td>feat: optional TLS on the client listener</td></tr>
+<tr><td class="nowrap"><code>3218ca2</code></td><td>feat: inbound SCRAM-SHA-256 auth with proxy-only credentials</td></tr>
+<tr><td class="nowrap"><code>0126dbf</code></td><td>fix: harden inbound SCRAM input, answer logout locally, gate DB tests</td></tr>
+<tr><td class="nowrap"><code>b76d1c5</code></td><td>test: replica-set integration tests for failover, read preference, cursors</td></tr>
+<tr><td class="nowrap"><code>cd3f860</code></td><td>test: make RS failover tests verify the stepdown actually happened</td></tr>
+<tr><td class="nowrap"><code>9c23f88</code></td><td>fix: send raw 28-byte SCRAM-SHA-256 salt so libmongoc accepts proxy auth</td></tr>
+<tr><td class="nowrap"><code>54f78de</code></td><td>test: add PHP ext-mongodb smoke test through the proxy</td></tr>
+<tr><td class="nowrap"><code>3576989</code></td><td>fix: stop dynamic config poller and serialize go-getter to remove data race</td></tr>
+<tr><td class="nowrap"><code>8dc05f8</code></td><td>fix: cancel in-flight dynamic config fetch on Close</td></tr>
+<tr><td class="nowrap"><code>7fa5a71</code></td><td>docs: Atlas PoC runbook and replica-set usage</td></tr>
+<tr><td class="nowrap"><code>c88e3e1</code></td><td>fix: close TLS clients on the plain port and read frames incrementally</td></tr>
+<tr><td class="nowrap"><code>ecc43f9</code></td><td>fix: cap unauthenticated frames and close idle unauthenticated connections</td></tr>
+<tr><td class="nowrap"><code>d160048</code></td><td>fix: never forward client bytes before authentication</td></tr>
+<tr><td class="nowrap"><code>de0e471</code></td><td>feat: add -max-connections to cap open client connections</td></tr>
+<tr><td class="nowrap"><code>6e9c349</code></td><td>fix: tag unauthenticated requests command:unauthenticated in statsd</td></tr>
+<tr><td class="nowrap"><code>50bfb21</code></td><td>fix: abort in-flight upstream requests on kill and exit after a second signal</td></tr>
+<tr><td class="nowrap"><code>0e760b7</code></td><td>fix: count proxy error replies and correct the failover runbook</td></tr>
+<tr><td class="nowrap"><code>08bc400</code></td><td>fix: make -require-upstream-tls reject disabled certificate verification</td></tr>
+<tr><td class="nowrap"><code>86aba0c</code></td><td>test: give the new proxy tests ports no other test uses</td></tr>
+<tr><td class="nowrap"><code>1584a75</code></td><td>fix: answer invalid read preferences with BadValue</td></tr>
+<tr><td class="nowrap"><code>9327529</code></td><td>fix: refuse authentication commands locally when inbound auth is off</td></tr>
+<tr><td class="nowrap"><code>cdb64c5</code></td><td>fix: route write commands to the primary regardless of $readPreference</td></tr>
+<tr><td class="nowrap"><code>6f4fe6c</code></td><td>fix: validate -max-wire-version and correct its and the 11602 label docs</td></tr>
+<tr><td class="nowrap"><code>18282f0</code></td><td>chore: unset CI explicitly in make test-unit</td></tr>
+<tr><td class="nowrap"><code>e804464</code></td><td>chore: add .dockerignore</td></tr>
+<tr><td class="nowrap"><code>fb37dd5</code></td><td>chore: drop the unused checks: write workflow permission</td></tr>
+<tr><td class="nowrap"><code>72c2613</code></td><td>chore: gofmt util/statsd_test.go</td></tr>
+<tr><td class="nowrap"><code>16c8717</code></td><td>docs: record the final-review fixes in the change backlog</td></tr>
+<tr><td class="nowrap"><code>dcdd940</code></td><td>docs: record deferred review findings as open follow-ups</td></tr>
+<tr><td class="nowrap"><code>3d47f27</code></td><td>fix: fail fast with code 133 on unsatisfiable read preference</td></tr>
+<tr><td class="nowrap"><code>3137c2d</code></td><td>docs: document code 133 and generic proxy error messages</td></tr>
+<tr><td class="nowrap"><code>43c912e</code></td><td>fix: treat RSMember and RSGhost as unsettled in fail-fast check</td></tr>
+<tr><td class="nowrap"><code>bbaea44</code></td><td>feat: forward upstream state-change codes instead of generic 11602</td></tr>
+<tr><td class="nowrap"><code>75fb43a</code></td><td>test: pin driver version for pool-cleared parsing; index state codes by name</td></tr>
+<tr><td class="nowrap"><code>6d19397</code></td><td>ci: fix test-docker modcache perms, gosec G304, bump actions to Node 24</td></tr>
+<tr><td class="nowrap"><code>9b11116</code></td><td>build(deps): upgrade go-getter and vulnerable transitive modules</td></tr>
+<tr><td class="nowrap"><code>430d3f1</code></td><td>ci: replace salus with gosec, govulncheck and trufflehog</td></tr>
+</tbody>
+</table></div>
+</details>
+
+<!-- ============================================================ -->
+<h2 id="manifest">12. Machine-readable manifest</h2>
+<p>The same facts as JSON, for agents that parse this page. It is in a <code>&lt;script type="application/json" id="change-manifest"&gt;</code> element.</p>
+<script type="application/json" id="change-manifest">
+{
+  "repo": "GlobalHop/mongobetween",
+  "upstream": "coinbase/mongobetween",
+  "branch": "feature/rs-connection-pool",
+  "base": {"branch": "master", "commit": "ea5a87e"},
+  "range": "c9f11cd..430d3f1",
+  "goal": "Connection-pool proxy for PHP (ext-mongodb/libmongoc) in front of an unsharded MongoDB Atlas replica set",
+  "design": {
+    "persona": "mongos (msg: isdbgrid), handshake answered locally in request opcode",
+    "forwarding": "byte-for-byte via Go driver pool, one checkout per message",
+    "routing_priority": ["transaction pin", "cursor pin (id+namespace)", "client $readPreference", "primary"],
+    "writes": "always primary",
+    "max_wire_version": "mirror upstream, capped at 25 (driver v1.17.10)"
+  },
+  "versions": {
+    "mongo_driver": "v1.17.10",
+    "go_directive": "1.26.0",
+    "build_image": "golang:1.27",
+    "runtime_image": "gcr.io/distroless/static-debian12:nonroot",
+    "go_getter": "v1.8.10",
+    "php_ext_mongodb_tested": "2.3.3",
+    "atlas_tested": ["8.0.37", "9.0.7"]
+  },
+  "areas": [
+    {"id": "handshake", "commits": ["2473379", "6f4fe6c"], "files": ["mongo/handshake.go", "mongo/command.go"]},
+    {"id": "error_replies", "commits": ["eb35d7b", "0e760b7", "1584a75", "9327529", "3d47f27", "3137c2d", "43c912e", "bbaea44", "75fb43a"], "files": ["mongo/errors.go", "mongo/mongo.go", "proxy/connection.go"]},
+    {"id": "frame_limits_exhaust", "commits": ["b22b29d", "c88e3e1"], "files": ["mongo/exhaust.go", "proxy/connection.go"]},
+    {"id": "pinning", "commits": ["6f0b37d", "930de3a", "61e4e29", "c37b237"], "files": ["mongo/cursor_cache.go", "mongo/pinning.go"]},
+    {"id": "read_preference", "commits": ["7272f94", "f5b41b9", "cdb64c5"], "files": ["mongo/operations.go", "mongo/mongo.go"]},
+    {"id": "lifecycle_upstream_tls", "commits": ["d3ccb8b", "50bfb21", "08bc400"], "files": ["mongobetween.go", "proxy/proxy.go", "config/config.go"]},
+    {"id": "listener_tls", "commits": ["9e52db1"], "files": ["proxy/tls.go"]},
+    {"id": "inbound_auth", "commits": ["3218ca2", "0126dbf", "9c23f88", "ecc43f9", "d160048", "de0e471", "6e9c349"], "files": ["proxy/auth.go", "proxy/connection.go"]},
+    {"id": "dynamic_config", "commits": ["3576989", "8dc05f8"], "files": ["proxy/dynamic.go"]},
+    {"id": "metrics", "commits": ["b883655", "0e760b7", "de0e471"]},
+    {"id": "deps_build", "commits": ["3e3ea57", "9b11116", "e804464"], "files": ["go.mod", "Dockerfile", ".dockerignore"]},
+    {"id": "tests", "commits": ["e17c732", "c31441b", "b76d1c5", "cd3f860", "54f78de", "86aba0c", "18282f0"], "files": ["docker-compose.yml", "scripts/test-docker.sh", "scripts/php-smoke.sh", "test/php/", "proxy/rs_test.go"]},
+    {"id": "ci", "commits": ["f527cfa", "fb37dd5", "6d19397", "430d3f1"], "files": [".github/workflows/workflow.yaml", ".golangci.yml"]},
+    {"id": "docs", "commits": ["c9f11cd", "7fa5a71", "16c8717", "dcdd940", "3137c2d"], "files": [".claude/knowledge/", "docs/atlas-poc.md", "docs/superpowers/plans/2026-11-16-rs-connection-pool-proxy.md", "README.md"]}
+  ],
+  "new_flags": ["-max-wire-version", "-checkout-timeout", "-shutdown-timeout", "-require-upstream-tls", "-tls-cert-file", "-tls-key-file", "-tls-ca-file", "-auth-users-file", "-auth-timeout", "-max-connections"],
+  "error_codes": {
+    "state_change_forwarded": [91, 11600, 11602, 10107, 13435, 13436, 189],
+    "11602": "generic proxy-side failure, retry labels by request type",
+    "133": "unsatisfiable non-primary read preference, no labels, fail fast on stable RS",
+    "13": "writes disabled or command before auth",
+    "18": "proxy auth failure or auth command with auth off",
+    "2": "invalid $readPreference"
+  },
+  "invariants": [
+    "Handshake reply has no helloOk, topologyVersion, compression, setName, hosts, speculativeAuthenticate",
+    "maxWireVersion <= topology.SupportedWireVersions.Max",
+    "moreToCome replies never return to the pool; exhaustAllowed stripped",
+    "Client-visible errmsg are fixed strings; details only in logs",
+    "No client bytes forwarded before authentication",
+    "Writes always to primary",
+    "Cursor pin store and lookup use the same (id, namespace) key",
+    "TestDriverVersionPinned guards pool-cleared error text parsing"
+  ],
+  "open_items": [
+    "Go driver v2 migration (wire > 25)",
+    "speculativeAuthenticate",
+    "idle deadline on authenticated sockets",
+    "IsWrite completeness, legacy OP_UPDATE/OP_DELETE, go-getter replacement",
+    "sharded persona untested",
+    "G115 per-site nosec decision"
+  ],
+  "knowledge_base": ".claude/knowledge/README.md",
+  "runbook": "docs/atlas-poc.md"
+}
+</script>
+
+<footer>
+  Generated from <code>git log master..feature/rs-connection-pool</code>, <code>.claude/knowledge/</code> and <code>docs/atlas-poc.md</code> on 2026-11-17. Contains no credentials or cluster hostnames.
+</footer>
+
+</div>
+</body>
+</html>
