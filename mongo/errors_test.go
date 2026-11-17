@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -153,7 +154,12 @@ func TestClassifyMessagesNeverLeakCause(t *testing.T) {
 }
 
 // fakePoolCleared mimics the driver's unexported topology.poolClearedError: retryable, no Unwrap, and the cause
-// only visible in the message text.
+// only visible in the message text. Format copied from go.mongodb.org/mongo-driver@v1.17.10
+// x/mongo/driver/topology/pool.go:57-62:
+//
+//	fmt.Sprintf("connection pool for %v was cleared because another operation failed with: %v", pce.address, pce.err)
+//
+// ClassifyProxyError parses this text; see TestDriverVersionPinned.
 type fakePoolCleared struct{ cause error }
 
 func (f fakePoolCleared) Error() string {
@@ -168,13 +174,13 @@ var stateChangeCases = []struct {
 	name    string
 	message string
 }{
-	{91, "ShutdownInProgress", "mongobetween: upstream server shutting down (ShutdownInProgress)"},
-	{11600, "InterruptedAtShutdown", "mongobetween: upstream server shutting down (InterruptedAtShutdown)"},
-	{11602, "InterruptedDueToReplStateChange", "mongobetween: upstream primary changed (InterruptedDueToReplStateChange)"},
-	{10107, "NotWritablePrimary", "mongobetween: upstream primary changed (NotWritablePrimary)"},
-	{13435, "NotPrimaryNoSecondaryOk", "mongobetween: upstream primary changed (NotPrimaryNoSecondaryOk)"},
-	{13436, "NotPrimaryOrSecondary", "mongobetween: upstream primary changed (NotPrimaryOrSecondary)"},
-	{189, "PrimarySteppedDown", "mongobetween: upstream primary changed (PrimarySteppedDown)"},
+	{91, "ShutdownInProgress", "upstream server shutting down (ShutdownInProgress)"},
+	{11600, "InterruptedAtShutdown", "upstream server shutting down (InterruptedAtShutdown)"},
+	{11602, "InterruptedDueToReplStateChange", "upstream primary changed (InterruptedDueToReplStateChange)"},
+	{10107, "NotWritablePrimary", "upstream primary changed (NotWritablePrimary)"},
+	{13435, "NotPrimaryNoSecondaryOk", "upstream primary changed (NotPrimaryNoSecondaryOk)"},
+	{13436, "NotPrimaryOrSecondary", "upstream primary changed (NotPrimaryOrSecondary)"},
+	{189, "PrimarySteppedDown", "upstream primary changed (PrimarySteppedDown)"},
 }
 
 func TestClassifyForwardsStateChangeCodes(t *testing.T) {
@@ -196,9 +202,17 @@ func TestClassifyForwardsStateChangeCodes(t *testing.T) {
 			label := fmt.Sprintf("%d/%s", tc.code, kind)
 			assert.Equal(t, tc.code, pe.Code, label)
 			assert.Equal(t, tc.name, pe.CodeName, label)
-			assert.Equal(t, tc.message[len("mongobetween: "):], pe.Message, label)
+			assert.Equal(t, tc.message, pe.Message, label)
 			assert.NotContains(t, pe.Message, "mongodb.net", label)
 			assert.Equal(t, []string{"RetryableWriteError"}, pe.Labels, label)
+			reply, rErr := ErrorResponse(read, pe)
+			assert.NoError(t, rErr, label)
+			replyOp, dErr := Decode(reply.Wm)
+			assert.NoError(t, dErr, label)
+			doc := bson.Raw(replyOp.(*opMsg).sections[0].(*opMsgSectionSingle).msg)
+			assert.Equal(t, "mongobetween: "+tc.message, doc.Lookup("errmsg").StringValue(), label)
+			assert.Equal(t, tc.code, doc.Lookup("code").Int32(), label)
+			assert.Equal(t, tc.name, doc.Lookup("codeName").StringValue(), label)
 			assert.Equal(t, []string{"TransientTransactionError"}, ClassifyProxyError(err, txn).Labels, label)
 		}
 	}
@@ -223,4 +237,25 @@ func TestClassifySentinelsBeatStateChangeCode(t *testing.T) {
 	req := errTestMsg(t, bson.D{{Key: "find", Value: "c"}, {Key: "$db", Value: "test"}})
 	err := fmt.Errorf("%w: %w", ErrFailedToSatisfyReadPreference, driver.Error{Code: 91, Name: "ShutdownInProgress"})
 	assert.Equal(t, int32(133), ClassifyProxyError(err, req).Code)
+}
+
+// TestDriverVersionPinned fails when the mongo-driver changes, because ClassifyProxyError parses the text of the
+// driver's unexported poolClearedError.
+func TestDriverVersionPinned(t *testing.T) {
+	const pinned = "v1.17.10"
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		t.Skip("build info unavailable")
+	}
+	for _, dep := range info.Deps {
+		if dep.Path != "go.mongodb.org/mongo-driver" {
+			continue
+		}
+		if dep.Version != pinned {
+			t.Fatalf("driver upgraded (%s, pinned %s): re-verify poolClearedError format used by "+
+				"ClassifyProxyError, then update this pin", dep.Version, pinned)
+		}
+		return
+	}
+	t.Skip("mongo-driver not in build info deps")
 }

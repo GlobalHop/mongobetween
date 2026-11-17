@@ -29,6 +29,8 @@ const (
 	codeFailedToSatisfyReadPreference   int32 = 133
 	codeInterruptedDueToReplStateChange int32 = 11602
 
+	nameInterruptedDueToReplStateChange = "InterruptedDueToReplStateChange"
+
 	// Client-visible messages are fixed: errors from the driver carry the upstream topology and hostnames, which
 	// stay in the proxy logs.
 	msgWritesDisabled        = "writes are disabled"
@@ -69,7 +71,7 @@ func ClassifyProxyError(err error, req Operation) ProxyError {
 
 	pe := ProxyError{
 		Code:     codeInterruptedDueToReplStateChange,
-		CodeName: "InterruptedDueToReplStateChange",
+		CodeName: nameInterruptedDueToReplStateChange,
 		Message:  upstreamErrorMessage(err),
 		Labels:   []string{labelRetryableWrite},
 	}
@@ -99,12 +101,24 @@ type stateChange struct {
 var stateChanges = map[int32]stateChange{
 	91:    {91, "ShutdownInProgress", "upstream server shutting down (ShutdownInProgress)"},
 	11600: {11600, "InterruptedAtShutdown", "upstream server shutting down (InterruptedAtShutdown)"},
-	11602: {11602, "InterruptedDueToReplStateChange", "upstream primary changed (InterruptedDueToReplStateChange)"},
+	codeInterruptedDueToReplStateChange: {
+		codeInterruptedDueToReplStateChange, nameInterruptedDueToReplStateChange,
+		"upstream primary changed (" + nameInterruptedDueToReplStateChange + ")",
+	},
 	10107: {10107, "NotWritablePrimary", "upstream primary changed (NotWritablePrimary)"},
 	13435: {13435, "NotPrimaryNoSecondaryOk", "upstream primary changed (NotPrimaryNoSecondaryOk)"},
 	13436: {13436, "NotPrimaryOrSecondary", "upstream primary changed (NotPrimaryOrSecondary)"},
 	189:   {189, "PrimarySteppedDown", "upstream primary changed (PrimarySteppedDown)"},
 }
+
+// stateChangesByName indexes stateChanges by codeName, built once from the single table.
+var stateChangesByName = func() map[string]stateChange {
+	m := make(map[string]stateChange, len(stateChanges))
+	for _, sc := range stateChanges {
+		m[sc.name] = sc
+	}
+	return m
+}()
 
 // poolClearedCause extracts the codeName from the text of the driver's pool-cleared error. That error type is
 // unexported and has no Unwrap, so its cause (a server error rendered as "(CodeName) message") is only in its text.
@@ -122,10 +136,8 @@ func upstreamStateChange(err error) (stateChange, bool) {
 		}
 		if _, ok := cur.(driver.RetryablePoolError); ok {
 			if m := poolClearedCause.FindStringSubmatch(cur.Error()); m != nil {
-				for _, sc := range stateChanges {
-					if sc.name == m[1] {
-						return sc, true
-					}
+				if sc, ok := stateChangesByName[m[1]]; ok {
+					return sc, true
 				}
 			}
 		}

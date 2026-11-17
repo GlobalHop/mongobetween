@@ -155,15 +155,15 @@ Use a scratch database (`poc`) so the test data is easy to drop.
 
 Expected result: no uncaught exceptions. Writes issued during the election may be retried by the driver; reads
 may stall for as long as the election takes (bounded by `serverSelectionTimeoutMS` upstream) and then proceed.
-If the proxy does reply with an error during the window it is usually the code the upstream itself reported
-(see the state-change table below, for example 91 ShutdownInProgress when a primary enters quiesce mode),
-otherwise code 11602 (InterruptedDueToReplStateChange), which libmongoc treats as retryable for reads and retries once. Its labels depend on the request: outside a
-transaction it carries `RetryableWriteError` (retryable writes retry once); inside a transaction it carries
-`TransientTransactionError` (the application retries the whole transaction); on `commitTransaction` it carries
-`RetryableWriteError` and `UnknownTransactionCommitResult` (the commit is retried). Each such reply is counted in the
-`proxy_error_reply` metric (tagged `code` and `command`) and logged as "Proxy error reply"; expect them only if
-the election outlasted the timeouts. Confirm in Atlas that a different member is
-now primary and that the loop's last iteration succeeded. Repeat three times.
+If the proxy does reply with an error during the window it is usually the code the upstream itself reported (see the
+state-change table below, for example 91 ShutdownInProgress when a primary enters quiesce mode), otherwise code 11602
+(InterruptedDueToReplStateChange), which libmongoc treats as retryable for reads and retries once. Its labels depend
+on the request: outside a transaction it carries `RetryableWriteError` (retryable writes retry once); inside a
+transaction it carries `TransientTransactionError` (the application retries the whole transaction); on
+`commitTransaction` it carries `RetryableWriteError` and `UnknownTransactionCommitResult` (the commit is retried).
+Each such reply is counted in the `proxy_error_reply` metric (tagged `code` and `command`) and logged as "Proxy error
+reply"; expect them only if the election outlasted the timeouts. Confirm in Atlas that a different member is now
+primary and that the loop's last iteration succeeded. Repeat three times.
 
 A read whose read preference no member can satisfy (for example a tag set matching nothing) is not a failover
 symptom. On a stable replica set (a primary, no member of unknown state) the proxy replies at once with code 133
